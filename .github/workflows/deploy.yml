@@ -23,8 +23,8 @@ jobs:
 
     - name: Clone and copy frontend repository
       run: |
-        git clone https://girudomed.kazan%40gmail.com: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@github.com/girudomed/call_center_bank.git
+        git clone https://girudomed.kazan%40gmail.com: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@github.com/girudomed/call_center_front.git
         scp -r call_center_front/* root@212.113.102.14:/var/www/call_center_front
 
     - name: Execute deployment script
-      run: ssh root@212.113.102.14 'bash -s' < ./deploy.sh
+      run: ssh root@212.113.102.14 'bash -s' < /var/www/call_center_back/deploy.sh
