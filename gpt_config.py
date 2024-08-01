@@ -5,11 +5,13 @@ import os
 from datetime import datetime
 from pymysql import Error
 from dotenv import load_dotenv
+import asyncio
 
 # Загрузка переменных окружения
 load_dotenv()
 
 logger = logging.getLogger()
+logging.basicConfig(level=logging.INFO)
 
 # Установка API-ключа OpenAI
 api_key = os.getenv('OPENAI_API_KEY', 'sk-proj-dWlINNFTxpaktU96B4qyT3BlbkFJgAXRiIHWI5DRbMoUWGPG')
@@ -22,6 +24,14 @@ async def analyze_call_with_gpt(transcript, checklists):
     logger.info(f"Анализ звонка с использованием GPT для расшифровки: {transcript}")
     if not transcript:
         logger.info("Отсутствует расшифровка звонка. Пропуск анализа.")
+        return None, None, None, None, None
+
+    # Проверка структуры checklists и приведение к списку словарей
+    if isinstance(checklists, tuple):
+        logger.warning(f"checklists является кортежем. Преобразование в список.")
+        checklists = list(checklists)
+    if not isinstance(checklists, list) or not all(isinstance(item, dict) for item in checklists):
+        logger.error("checklists должен быть списком словарей.")
         return None, None, None, None, None
 
     # Формирование списка категорий и критериев для анализа
@@ -80,7 +90,7 @@ async def analyze_call_with_gpt(transcript, checklists):
         # Генерация оценок по каждому пункту чек-листа
         criteria_scores = []
         for criterion in checklist_result.split("\n"):
-            criterion_score_match = re.search(rf'{criterion.strip()}: (\d+(\.\d+)?)', result_text)
+            criterion_score_match = re.search(rf'{re.escape(criterion.strip())}: (\d+(\.\d+)?)', result_text)
             criterion_score = float(criterion_score_match.group(1)) if criterion_score_match else 0
             criteria_scores.append((criterion.strip(), criterion_score))
 
@@ -90,6 +100,9 @@ async def analyze_call_with_gpt(transcript, checklists):
         return score, analyzed_result, call_category_clean, category_number, checklist_result
     except openai.error.OpenAIError as e:
         logger.error(f"Ошибка при вызове OpenAI API: {e}")
+        return None, None, None, None, None
+    except Exception as e:
+        logger.error(f"Неизвестная ошибка: {e}")
         return None, None, None, None, None
 
 async def save_call_score(connection, call_id, score, call_category, call_date, called_info, caller_info, talk_duration, transcript, result, category_number, checklist_number, checklist_category):
@@ -113,3 +126,9 @@ async def save_call_score(connection, call_id, score, call_category, call_date, 
         except Error as e:
             logger.error(f"Произошла ошибка '{e}' при сохранении данных звонка")
             await connection.rollback()
+
+# Пример вызова функции
+if __name__ == "__main__":
+    transcript = "Example transcript"
+    checklists = [{"Check_list_categories": "Category 1", "criterion_category": "Criterion 1", "criteria_check_list": "Criterion details", "Number_check_list": 1}]
+    asyncio.run(analyze_call_with_gpt(transcript, checklists))
