@@ -1,0 +1,10 @@
+Requirement already satisfied: types-python-dateutil in /usr/lib/python3/dist-packages (2.8)
+Collecting types-python-dateutil
+  Using cached types_python_dateutil-2.9.0.20240316-py3-none-any.whl.metadata (1.8 kB)
+Downloading types_python_dateutil-2.9.0.20240316-py3-none-any.whl (9.7 kB)
+Installing collected packages: types-python-dateutil
+  Attempting uninstall: types-python-dateutil
+    Found existing installation: types-python-dateutil 2.8
+    Uninstalling types-python-dateutil-2.8:
+      Successfully uninstalled types-python-dateutil-2.8
+Successfully installed types-python-dateutil-2.9.0.20240316

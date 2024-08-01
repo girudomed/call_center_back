@@ -1,0 +1,11 @@
+Requirement already satisfied: redis in /usr/lib/python3/dist-packages (4.3.4)
+Collecting redis
+  Downloading redis-5.0.8-py3-none-any.whl.metadata (9.2 kB)
+Downloading redis-5.0.8-py3-none-any.whl (255 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 255.6/255.6 kB 878.5 kB/s eta 0:00:00
+Installing collected packages: redis
+  Attempting uninstall: redis
+    Found existing installation: redis 4.3.4
+    Uninstalling redis-4.3.4:
+      Successfully uninstalled redis-4.3.4
+Successfully installed redis-5.0.8
