@@ -66,7 +66,7 @@ async def analyze_call_with_gpt(transcript, checklists):
                 {"role": "user", "content": prompt}
             ],
             max_tokens=2000,
-            temperature=0.3,
+            temperature=0.4,
             presence_penalty=0.5,
             frequency_penalty=0.5
         )
