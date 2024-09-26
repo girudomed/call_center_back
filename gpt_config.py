@@ -14,9 +14,10 @@ logger = logging.getLogger()
 logging.basicConfig(level=logging.INFO)
 
 # Установка API-ключа OpenAI
-api_key = os.getenv('OPENAI_API_KEY', 'sk-proj-dWlINNFTxpaktU96B4qyT3BlbkFJgAXRiIHWI5DRbMoUWGPG')
+api_key = os.getenv('OPENAI_API_KEY')
 if not api_key:
     logger.error("OpenAI API key is not provided. Please set the API key in the environment variable 'OPENAI_API_KEY'.")
+    raise ValueError("OpenAI API key is missing.")
 else:
     openai.api_key = api_key
 
@@ -26,17 +27,24 @@ async def analyze_call_with_gpt(transcript, checklists):
         logger.info("Отсутствует расшифровка звонка. Пропуск анализа.")
         return None, None, None, None, None
 
-    # Проверка структуры checklists и приведение к списку словарей
-    if isinstance(checklists, tuple):
-        logger.warning(f"checklists является кортежем. Преобразование в список.")
-        checklists = list(checklists)
-    if not isinstance(checklists, list) or not all(isinstance(item, dict) for item in checklists):
-        logger.error("checklists должен быть списком словарей.")
-        return None, None, None, None, None
+    # Проверка структуры checklists и правильного формата
+    if not isinstance(checklists, list):
+        logger.error(f"Ошибка: Ожидался список, но получили {type(checklists)}")
+        raise ValueError(f"Ошибка: Ожидался список, но получили {type(checklists)}")
+
+    # Проверка, что все элементы в checklists — это словари
+    for i, item in enumerate(checklists):
+        if not isinstance(item, dict):
+            logger.error(f"Ошибка: Элемент {i} не является словарем. Получен {type(item)}")
+            raise ValueError(f"Ошибка: Элемент {i} не является словарем. Получен {type(item)}")
 
     # Формирование списка категорий и критериев для анализа
-    categories_text = "\n".join([f"{checklist['Check_list_categories']}: {checklist['criterion_category']}" for checklist in checklists])
-    criteria_text = "\n".join([checklist['criteria_check_list'] for checklist in checklists])
+    try:
+        categories_text = "\n".join([f"{checklist['Check_list_categories']}: {checklist['criterion_category']}" for checklist in checklists])
+        criteria_text = "\n".join([checklist['criteria_check_list'] for checklist in checklists])
+    except KeyError as e:
+        logger.error(f"Ошибка: ключ {e} не найден в checklists. Проверьте структуру данных.")
+        return None, None, None, None, None
 
     prompt = f"""
     Анализ звонка:
@@ -88,7 +96,12 @@ async def analyze_call_with_gpt(transcript, checklists):
         logger.info(f"Общая оценка звонка: {score}, Категория звонка: {call_category_clean}, Номер категории: {category_number}")
 
         # Поиск чек-листа по номеру категории
-        checklist = next((checklist for checklist in checklists if checklist['Number_check_list'] == category_number), None)
+        try:
+            checklist = next((checklist for checklist in checklists if checklist['Number_check_list'] == category_number), None)
+        except TypeError as e:
+            logger.error(f"Ошибка при поиске чек-листа: {e}")
+            return None, None, None, None, None
+
         checklist_result = checklist['criteria_check_list'] if checklist else "Чек-лист не найден"
 
         # Генерация оценок по каждому пункту чек-листа
