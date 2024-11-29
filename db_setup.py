@@ -1,3 +1,7 @@
+###Этот модуль работает с чек-листами. Но тут настройка БД идет, конфигурация
+#Метод за чек-листы async def get_checklists_and_criteria
+### weight_criteria удалили отсюда как сам параметр, к нему не обращаемся
+
 import logging
 import aiomysql
 from async_db_connection import execute_async_query
@@ -61,11 +65,10 @@ async def create_tables(connection):
             CREATE TABLE IF NOT EXISTS check_list (
                 Number_check_list INT AUTO_INCREMENT PRIMARY KEY,
                 Check_list_categories VARCHAR(255) NOT NULL,
-                criterion_category TEXT NOT NULL,
                 description TEXT NOT NULL,
                 criteria_check_list TEXT NOT NULL,
                 type_criteria VARCHAR(255),
-                weight_criteria VARCHAR(255)
+                criterion_category VARCHAR(255)
             )
             """)
 
@@ -78,13 +81,22 @@ async def create_tables(connection):
 async def get_checklists_and_criteria(connection):
     logger.info("Получение чек-листов и критериев из базы данных...")
     query = """
-    SELECT Number_check_list, Check_list_categories, criterion_category, description, criteria_check_list, type_criteria, weight_criteria 
+    SELECT Number_check_list, Check_list_categories, description, criteria_check_list, type_criteria, criterion_category, scoring_method, fatal_error, max_score
     FROM check_list
     """
     checklists = await execute_async_query(connection, query)
     return checklists if checklists else []
 
+async def main():
+    connection = await create_async_connection()
+    if connection is None:
+        logger.error("Не удалось установить соединение с базой данных.")
+        return
+    try:
+        await create_tables(connection)
+    finally:
+        connection.close()
+
 if __name__ == "__main__":
     import asyncio
-    asyncio.run(create_async_connection())
-    asyncio.run(create_tables())
+    asyncio.run(main())

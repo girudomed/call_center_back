@@ -1,3 +1,4 @@
+#gpt_config.py
 import openai
 import logging
 import re
@@ -6,7 +7,8 @@ from datetime import datetime
 from pymysql import Error
 from dotenv import load_dotenv
 import asyncio
-
+from openai import OpenAI
+client = OpenAI()
 # Загрузка переменных окружения
 load_dotenv()
 
@@ -29,7 +31,7 @@ async def analyze_call_with_gpt(transcript, checklists):
 
     # Проверка структуры checklists и правильного формата
     if not isinstance(checklists, list):
-        logger.error(f"Ошибка: Ожидался список, но получили {type(checklists)}")
+        logger.error(f"Ошибка: Ожидался список, но получили {type(checklists)}. Проверьте источник данных.")
         raise ValueError(f"Ошибка: Ожидался список, но получили {type(checklists)}")
 
     # Проверка, что все элементы в checklists — это словари
@@ -57,20 +59,33 @@ async def analyze_call_with_gpt(transcript, checklists):
     Критерии:
     {criteria_text}
 
-    Дайте оценку по каждому пункту от 0 до 10 и укажите общую оценку звонка. Ответ необходимо дать в формате:
-    "Категория звонка: <Название категории> number_category=<Номер категории>"
+    Дайте оценку по каждому пункту от 0 до 10. Ответ необходимо дать в формате:
+    "Категория звонка: <Название категории< number_category=<Номер категории>"
     <Название критерия>: <оценка>
+
+    1. <Название критерия>: <оценка>/10 — <Подробное объяснение по данному критерию с рекомендациями при необходимости>
+    2. <Название критерия>: <оценка>/10 — <Подробное объяснение по данному критерию с рекомендациями при необходимости>
+    ...
+    Средняя оценка: <общая оценка>/10
+
+    Заключение: <Заключительный вывод, который суммирует впечатления о звонке>
+
+    Рекомендации:
+    1. <Рекомендация 1>
+    2. <Рекомендация 2>
+    ...
     """
 
     try:
-        response = await openai.ChatCompletion.acreate(
-            model="gpt-4o-mini",
+        completion = client.chat.completions.create(
+            model="ft:gpt-4o-mini-2024-07-18:personal:assistentoperators:ATrNVXNY",
             messages=[
                 {"role": "system", "content": "Вы — аналитик, который помогает классифицировать звонки и оценивать их по системе критериев. "
-                    "Оценки выставляются по следующим критериям: инициативность оператора, успешность записи, "
-                    "полнота предоставленной информации, реакция на отказ, уточнение об адресе, удовлетворенность клиента. "
-                    "Оценки даются по шкале от 0 до 10. Если оценка выше 10, приравнивайте её к 10. "
-                    "Общая оценка звонка вычисляется как взвешенная средняя по критериям, где каждый критерий имеет свою весомость."},
+                "Оценки выставляются по следующим критериям: инициативность оператора, успешность записи, "
+                "полнота предоставленной информации, реакция на отказ, уточнение об адресе, удовлетворенность клиента. "
+                "Оценки даются по шкале от 0 до 10. Если оценка выше 10, приравнивайте её к 10. "
+                "Общая оценка звонка <Общая оценка звонка< call_score  вычисляется как взвешенная средняя по критериям, где каждый критерий имеет свою весомость. "
+                "Ваш ответ должен следовать следующему формату: отдельные оценки с детализированными объяснениями по каждому критерию, средней оценкой, заключением и рекомендациями, как описано в сообщении пользователя. You are an analytical assistant specialized in evaluating call center interactions based on predefined criteria. Your responses provide objective feedback and scoring across multiple categories of service quality, such as greeting quality, information accuracy, politeness, and responsiveness."},
                 {"role": "user", "content": prompt}
             ],
             max_tokens=2000,
@@ -78,18 +93,34 @@ async def analyze_call_with_gpt(transcript, checklists):
             presence_penalty=0.5,
             frequency_penalty=0.5
         )
-        result_text = response['choices'][0]['message']['content'].strip()
-        logger.info(f"Анализ звонка: {result_text}")
+        print(completion.choices[0].message)
+        result_text = completion.choices[0].message.content if completion.choices else None
+        if result_text:
+            result_text = result_text.strip()
+        else:
+            logger.error("Ответ от модели отсутствует или имеет пустое значение")
+            return None, None, None, None, None
+        
+        # Извлечение общей оценки из текста ответа модели
+        average_score_match = re.search(r'Средняя оценка: (\d+(\.\d+)?)/10', result_text)
+        average_score = float(average_score_match.group(1)) if average_score_match else None
 
-        # Поиск оценки, категории и номера категории в ответе GPT
-        score_match = re.search(r'Общая оценка звонка: (\d+(\.\d+)?)', result_text)
+        if average_score is not None:
+            logger.info(f"Извлеченная средняя оценка: {average_score}/10")
+        else:
+            logger.error("Не удалось извлечь среднюю оценку из ответа модели")
+
+        # Установка `score` как извлеченного среднего значения или 0, если значение отсутствует
+        score = average_score if average_score is not None else 0
+
+        # Извлечение категории звонка и номера категории
         category_match = re.search(r'Категория звонка: ([\w\s]+)', result_text)
         number_category_match = re.search(r'number_category=(\d+)', result_text)
 
-        score = float(score_match.group(1)) if score_match else 0
         call_category = category_match.group(1).strip() if category_match else "Не определено"
         category_number = int(number_category_match.group(1)) if number_category_match else None
 
+        
         # Убираем "number_category" из call_category
         call_category_clean = re.sub(r' number_category=\d+', '', call_category).strip()
 
@@ -97,9 +128,15 @@ async def analyze_call_with_gpt(transcript, checklists):
 
         # Поиск чек-листа по номеру категории
         try:
-            checklist = next((checklist for checklist in checklists if checklist['Number_check_list'] == category_number), None)
+            checklist = next((checklist for checklist in checklists if checklist.get('Number_check_list') == category_number), None)
+            if checklist is None:
+                logger.error("Чек-лист не найден")
+                return None, None, None, None, None
+
+            checklist_result = checklist['criteria_check_list']
         except TypeError as e:
             logger.error(f"Ошибка при поиске чек-листа: {e}")
+            
             return None, None, None, None, None
 
         checklist_result = checklist['criteria_check_list'] if checklist else "Чек-лист не найден"
@@ -114,8 +151,9 @@ async def analyze_call_with_gpt(transcript, checklists):
         # Формирование строки результата
         analyzed_result = f"{result_text}\nЧек-лист и оценки:\n" + "\n".join([f"{criterion}: {score}" for criterion, score in criteria_scores])
 
-        return score, analyzed_result, call_category_clean, category_number, checklist_result
-    except openai.error.OpenAIError as e:
+        logger.info(f"Returning from analyze_call_with_gpt: score={score}, analyzed_result={analyzed_result}, call_category_clean={call_category_clean}, category_number={category_number}, checklist_result={checklist_result}")
+        return score, analyzed_result,call_category_clean, category_number, checklist_result
+    except openai.OpenAIError as e:
         logger.error(f"Ошибка при вызове OpenAI API: {e}")
         return None, None, None, None, None
     except Exception as e:

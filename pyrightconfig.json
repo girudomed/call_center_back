@@ -1,4 +1,17 @@
 {
-    "reportMissingImports": false
-  }
-  
+    "reportMissingImports": false,
+      "include": [
+        "src"  // замените на каталог вашего проекта, если нужно
+      ],
+      "exclude": [
+        "**/node_modules",
+        "**/__pycache__",
+        "tests"
+      ],
+      "strict": ["src"],
+      "reportOptionalMemberAccess": "error",
+      "reportOptionalSubscript": "error",
+      "reportOptionalCall": "error",
+      "reportGeneralTypeIssues": "error",
+      "pythonVersion": "3.11"  // установите свою версию Python
+    }

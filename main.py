@@ -1,10 +1,11 @@
+#main.py
 import asyncio
-import logging
+import logging  # noqa: F401
 import aiohttp
 import openai
-from datetime import datetime
+from datetime import datetime  # noqa: F401
 import aiomysql
-from async_db_connection import create_async_connection, execute_async_query
+from async_db_connection import create_async_connection, execute_async_query  # noqa: F401
 from db_setup import create_tables, get_checklists_and_criteria
 from gpt_config import analyze_call_with_gpt, save_call_score
 from logging_config import setup_logging, check_and_clear_logs
@@ -12,22 +13,26 @@ from result_logging import log_analysis_result
 from quart import Quart, jsonify, send_from_directory
 import datetime as dt
 import threading
+import json
+import os
 
 # Создание экземпляра приложения Quart
 app = Quart(__name__)
+# Создайте экземпляр Lock
+lock = asyncio.Lock()
 
 # Параметры
 CONFIG = {
     'LIMIT': 5,
     'RETRIES': 3,
-    'START_DATE': '2024-06-26 00:00:00',
+    'START_DATE': '2024-10-01 00:00:00',
     'BATCH_SIZE': 30,
     'ENABLE_LOGGING': True,
-    'DB_HOST': '82.97.254.49',
-    'DB_PORT': 3306,
-    'DB_USER': 'gen_user',
-    'DB_PASSWORD': '_7*sA:J_urBLo<p4:K2fOlQdb_ds',
-    'DB_NAME': 'mangoapi_db'
+    'DB_HOST': os.getenv('DB_HOST'),
+    'DB_PORT': int(os.getenv('DB_PORT', 3306)),
+    'DB_USER': os.getenv('DB_USER'),
+    'DB_PASSWORD': os.getenv('DB_PASSWORD'),
+    'DB_NAME': os.getenv('DB_NAME')
 }
 
 # Настройка логирования
@@ -53,16 +58,17 @@ async def get_db_connection():
             user=CONFIG['DB_USER'],
             password=CONFIG['DB_PASSWORD'],
             db=CONFIG['DB_NAME'],
-            autocommit=True
+            autocommit=True,
+            cursorclass=aiomysql.DictCursor  # Используем DictCursor
         )
         return conn
     except Exception as e:
         logger.exception(f"Ошибка при подключении к базе данных: {e}")
         return None
 
-async def execute_async_query(connection, query, params=None):
+async def execute_async_query(connection, query, params=None):  # noqa: F811
     """Выполнение асинхронного SQL-запроса."""
-    async with connection.cursor() as cursor:
+    async with connection.cursor(aiomysql.DictCursor) as cursor:
         await cursor.execute(query, params)
         if cursor.description:
             result = await cursor.fetchall()
@@ -70,17 +76,10 @@ async def execute_async_query(connection, query, params=None):
         return None
 
 async def process_calls(calls, connection, checklists, lock):
-    """Обработка списка звонков."""
+    async with lock:
+        """Обработка списка звонков."""
     tasks = []
-    for row in calls:
-        call = {
-            'history_id': row[0],
-            'called_info': row[1],
-            'caller_info': row[2],
-            'talk_duration': row[3],
-            'transcript': row[4],
-            'context_start_time': row[5]
-        }
+    for call in calls:
         call_id = call['history_id']
         called_info = call['called_info']
         caller_info = call['caller_info']
@@ -90,38 +89,51 @@ async def process_calls(calls, connection, checklists, lock):
         call_date = timestamp_to_datetime(context_start_time).strftime('%Y-%m-%d %H:%M:%S') if context_start_time else None
         if transcript:
             tasks.append(analyze_and_save_call(
-                transcript, checklists, connection, call_id, call_date, called_info, caller_info, talk_duration, lock))
+                connection, transcript, checklists, call_id, call_date, called_info, caller_info, talk_duration, lock))
     try:
         await asyncio.gather(*tasks)
     except Exception as e:
         logger.exception(f"Ошибка при обработке звонков: {e}")
 
-async def analyze_and_save_call(transcript, checklists, connection, call_id, call_date, called_info, caller_info, talk_duration, lock):
+async def analyze_and_save_call(connection, transcript, checklists, call_id, call_date, called_info, caller_info, talk_duration, lock):
     """Анализ и сохранение результатов звонка."""
+    if isinstance(checklists, str):
+        checklists = json.loads(checklists)  # Преобразование из JSON-строки в список
+    elif isinstance(checklists, tuple):
+        checklists = list(checklists)  # Преобразование кортежа в список
+
+    # Цикл для повторных попыток анализа
     for attempt in range(CONFIG['RETRIES']):
         try:
+            # Выполняем анализ звонка с помощью GPT
             score, result, call_category, category_number, checklist_result = await analyze_call_with_gpt(transcript, checklists)
+            
             if result is None:
                 logger.error(f"Ошибка при анализе звонка {call_id}, пропуск сохранения результатов")
                 return
+
             logger.info(f"Анализ звонка {call_id}: результат={result}, категория={call_category}, чек-лист={checklist_result}")
             checklist_number = category_number
             checklist_category = checklist_result
 
+            # Блокировка для безопасного сохранения результатов в базе данных
             async with lock:
                 await save_call_score(
-                    connection, call_id, score, call_category, call_date, called_info, caller_info, talk_duration, transcript, result, category_number, checklist_number, checklist_category)
+                    connection, call_id, score, call_category, call_date, called_info, caller_info,
+                    talk_duration, transcript, result, category_number, checklist_number, checklist_category
+                )
             logger.info(f"Звонок {call_id} сохранен с результатом: {result}")
 
             log_analysis_result(call_id, result)
-            break
-        except openai.error.RateLimitError as e:
+            break  # Успешное завершение, выходим из цикла
+        except openai.RateLimitError as e:
             logger.warning(f"Превышен лимит запросов для звонка {call_id}: {e}")
             if attempt < CONFIG['RETRIES'] - 1:
-                await asyncio.sleep(2 ** attempt)  # Динамическая задержка между попытками
+                await asyncio.sleep(2 ** attempt)  # Экспоненциальная задержка между попытками
                 continue
             else:
                 logger.error(f"Превышен лимит попыток для звонка {call_id}")
+                break
         except aiohttp.ClientError as e:
             logger.error(f"Сетевая ошибка для звонка {call_id}: {e}")
             break
@@ -135,9 +147,9 @@ async def get_history_ids_from_call_history(connection):
     return await execute_async_query(connection, query, (START_DATE_TIMESTAMP,))
 
 async def get_history_ids_from_call_scores(connection):
-    """Получение идентификаторов оценок звонков."""
-    query = "SELECT history_id FROM call_scores"
-    return await execute_async_query(connection, query)
+    """Получение идентификаторов истории звонков."""
+    query = "SELECT history_id FROM call_history WHERE context_start_time >= %s"
+    return await execute_async_query(connection, query, (START_DATE_TIMESTAMP,))
 
 async def get_call_data_by_history_ids(connection, history_ids):
     """Получение данных о звонках по идентификаторам."""
@@ -161,15 +173,7 @@ async def process_missing_calls(missing_ids, connection, checklists, lock):
             continue
         
         tasks = []
-        for row in call_data:
-            call = {
-                'history_id': row[0],
-                'called_info': row[1],
-                'caller_info': row[2],
-                'talk_duration': row[3],
-                'transcript': row[4],
-                'context_start_time': row[5]
-            }
+        for call in call_data:
             call_id = call['history_id']
             called_info = call['called_info']
             caller_info = call['caller_info']
@@ -179,7 +183,7 @@ async def process_missing_calls(missing_ids, connection, checklists, lock):
             call_date = timestamp_to_datetime(context_start_time).strftime('%Y-%m-%d %H:%M:%S') if context_start_time else None
             if transcript:
                 tasks.append(analyze_and_save_call(
-                    transcript, checklists, connection, call_id, call_date, called_info, caller_info, talk_duration, lock))
+                    connection, transcript, checklists, call_id, call_date, called_info, caller_info, talk_duration, lock))
         
         try:
             await asyncio.gather(*tasks)
@@ -192,6 +196,7 @@ async def main():
     """Основная асинхронная функция."""
     logger.info("Начало выполнения скрипта")
     connection = None
+    lock = asyncio.Lock()  # Добавляем инициализацию
     try:
         connection = await get_db_connection()
         if connection:
@@ -211,8 +216,9 @@ async def main():
                 logger.error("Не удалось получить идентификаторы оценок звонков")
                 return
 
-            call_history_ids_set = set(row[0] for row in call_history_ids)
-            call_scores_ids_set = set(row[0] for row in call_scores_ids)
+            # Теперь получаем идентификаторы по ключу 'history_id'
+            call_history_ids_set = set(row['history_id'] for row in call_history_ids)
+            call_scores_ids_set = set(row['history_id'] for row in call_scores_ids)
 
             missing_ids = list(call_history_ids_set - call_scores_ids_set)
             logger.info(f"Отсутствующие ID: {missing_ids}")
@@ -241,6 +247,7 @@ async def main():
         if connection:
             connection.close()
             logger.info("Соединение с базой данных закрыто")
+
 
 @app.route('/api/call_history')
 async def get_call_history():

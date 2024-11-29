@@ -1,0 +1,6 @@
+#openai tools fine_tunes.prepare_data -f check_list_data.jsonl
+Команда openai tools fine_tunes.prepare_data -f check_list_data.jsonl служит для предварительной проверки и подготовки вашего JSONL-файла перед отправкой его на обучение.
+Запустите команду проверки: Выполните команду openai tools fine_tunes.prepare_data -f check_list_data.jsonl в терминале. Это:
+
+Проверит файл на форматирование и сообщит о возможных ошибках.
+Оптимизирует структуру JSONL для обучения, добавляя необходимые метаданные, если нужно.
