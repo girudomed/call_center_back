@@ -199,33 +199,36 @@ async def main():
     lock = asyncio.Lock()  # Добавляем инициализацию
     try:
         connection = await get_db_connection()
-        if connection:
-            logger.info("Подключение к базе данных успешно")
-            await create_tables(connection)
+        if connection is None:
+            logger.error("Подключение к базе данных не удалось, завершение программы.")
+            return
 
-            checklists = await get_checklists_and_criteria(connection)
-            logger.info(f"Получены чек-листы: {checklists}")
+        logger.info("Подключение к базе данных успешно")
+        await create_tables(connection)
 
-            call_history_ids = await get_history_ids_from_call_history(connection)
-            if call_history_ids is None:
-                logger.error("Не удалось получить идентификаторы истории звонков")
-                return
+        checklists = await get_checklists_and_criteria(connection)
+        logger.info(f"Получены чек-листы: {checklists}")
+
+        call_history_ids = await get_history_ids_from_call_history(connection)
+        if call_history_ids is None:
+            logger.error("Не удалось получить идентификаторы истории звонков")
+            return
             
-            call_scores_ids = await get_history_ids_from_call_scores(connection)
-            if call_scores_ids is None:
-                logger.error("Не удалось получить идентификаторы оценок звонков")
-                return
+        call_scores_ids = await get_history_ids_from_call_scores(connection)
+        if call_scores_ids is None:
+            logger.error("Не удалось получить идентификаторы оценок звонков")
+            return
 
-            # Теперь получаем идентификаторы по ключу 'history_id'
-            call_history_ids_set = set(row['history_id'] for row in call_history_ids)
-            call_scores_ids_set = set(row['history_id'] for row in call_scores_ids)
+        # Теперь получаем идентификаторы по ключу 'history_id'
+        call_history_ids_set = set(row['history_id'] for row in call_history_ids)
+        call_scores_ids_set = set(row['history_id'] for row in call_scores_ids)
 
-            missing_ids = list(call_history_ids_set - call_scores_ids_set)
-            logger.info(f"Отсутствующие ID: {missing_ids}")
+        missing_ids = list(call_history_ids_set - call_scores_ids_set)
+        logger.info(f"Отсутствующие ID: {missing_ids}")
 
-            if missing_ids:
-                lock = asyncio.Lock()
-                await process_missing_calls(missing_ids, connection, checklists, lock)
+        if missing_ids:
+            lock = asyncio.Lock()
+            await process_missing_calls(missing_ids, connection, checklists, lock)
 
             offset = 0
             while True:
