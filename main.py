@@ -1,6 +1,8 @@
 #main.py
 import asyncio
-import logging  # noqa: F401
+import logging
+import signal
+import threading  # noqa: F401
 import aiohttp
 import openai
 from datetime import datetime  # noqa: F401
@@ -10,18 +12,27 @@ from db_setup import create_tables, get_checklists_and_criteria
 from gpt_config import analyze_call_with_gpt, save_call_score
 from logging_config import setup_logging, check_and_clear_logs
 from result_logging import log_analysis_result
-from quart import Quart, jsonify, send_from_directory
+from quart import Quart, jsonify, render_template, send_from_directory
 import datetime as dt
-import threading
 import json
 import os
+import socket
 
 # Создание экземпляра приложения Quart
 app = Quart(__name__)
+logger = logging.getLogger(__name__)
+
 # Создайте экземпляр Lock
 lock = asyncio.Lock()
 
-# Параметры
+# Инициализация глобальных переменных
+app = Quart(__name__)
+logger = logging.getLogger(__name__)
+loop = asyncio.get_event_loop()
+lock = asyncio.Lock()
+connection = None
+
+# Параметры конфигурации
 CONFIG = {
     'LIMIT': 5,
     'RETRIES': 3,
@@ -41,6 +52,7 @@ logger = setup_logging(CONFIG['ENABLE_LOGGING'])
 # Преобразование START_DATE в таймстемп для запросов
 START_DATE_TIMESTAMP = int(dt.datetime.strptime(CONFIG['START_DATE'], '%Y-%m-%d %H:%M:%S').timestamp())
 
+
 def datetime_to_timestamp(dt_object):
     """Преобразование объекта datetime в таймстемп."""
     return int(dt_object.timestamp())
@@ -51,8 +63,11 @@ def timestamp_to_datetime(timestamp):
 
 async def get_db_connection():
     """Получение асинхронного соединения с базой данных MySQL."""
+    global connection
+    if connection and not connection.closed:
+        return connection
     try:
-        conn = await aiomysql.connect(
+        connection = await aiomysql.connect(
             host=CONFIG['DB_HOST'],
             port=CONFIG['DB_PORT'],
             user=CONFIG['DB_USER'],
@@ -61,7 +76,7 @@ async def get_db_connection():
             autocommit=True,
             cursorclass=aiomysql.DictCursor  # Используем DictCursor
         )
-        return conn
+        return connection
     except Exception as e:
         logger.exception(f"Ошибка при подключении к базе данных: {e}")
         return None
@@ -106,20 +121,20 @@ async def analyze_and_save_call(connection, transcript, checklists, call_id, cal
     for attempt in range(CONFIG['RETRIES']):
         try:
             # Выполняем анализ звонка с помощью GPT
-            score, result, call_category, category_number, checklist_result = await analyze_call_with_gpt(transcript, checklists)
+            score, result, call_category_clean, category_number, checklist_result = await analyze_call_with_gpt(transcript, checklists)
             
             if result is None:
                 logger.error(f"Ошибка при анализе звонка {call_id}, пропуск сохранения результатов")
                 return
 
-            logger.info(f"Анализ звонка {call_id}: результат={result}, категория={call_category}, чек-лист={checklist_result}")
+            logger.info(f"Анализ звонка {call_id}: результат={result}, категория={call_category_clean}, чек-лист={checklist_result}")
             checklist_number = category_number
             checklist_category = checklist_result
 
             # Блокировка для безопасного сохранения результатов в базе данных
             async with lock:
                 await save_call_score(
-                    connection, call_id, score, call_category, call_date, called_info, caller_info,
+                    connection, call_id, score, call_category_clean, call_date, called_info, caller_info,
                     talk_duration, transcript, result, category_number, checklist_number, checklist_category
                 )
             logger.info(f"Звонок {call_id} сохранен с результатом: {result}")
@@ -148,8 +163,8 @@ async def get_history_ids_from_call_history(connection):
 
 async def get_history_ids_from_call_scores(connection):
     """Получение идентификаторов истории звонков."""
-    query = "SELECT history_id FROM call_history WHERE context_start_time >= %s"
-    return await execute_async_query(connection, query, (START_DATE_TIMESTAMP,))
+    query = "SELECT history_id FROM call_scores WHERE call_date >= %s"
+    return await execute_async_query(connection, query, (CONFIG['START_DATE'],))
 
 async def get_call_data_by_history_ids(connection, history_ids):
     """Получение данных о звонках по идентификаторам."""
@@ -196,7 +211,6 @@ async def main():
     """Основная асинхронная функция."""
     logger.info("Начало выполнения скрипта")
     connection = None
-    lock = asyncio.Lock()  # Добавляем инициализацию
     try:
         connection = await get_db_connection()
         if connection is None:
@@ -205,7 +219,6 @@ async def main():
 
         logger.info("Подключение к базе данных успешно")
         await create_tables(connection)
-
         checklists = await get_checklists_and_criteria(connection)
         logger.info(f"Получены чек-листы: {checklists}")
 
@@ -227,23 +240,27 @@ async def main():
         logger.info(f"Отсутствующие ID: {missing_ids}")
 
         if missing_ids:
-            lock = asyncio.Lock()
             await process_missing_calls(missing_ids, connection, checklists, lock)
 
-            offset = 0
-            while True:
-                query = """
+        offset = 0
+        while True:
+            query = """
                 SELECT history_id, called_info, caller_info, talk_duration, transcript, context_start_time
                 FROM call_history 
                 WHERE context_start_time >= %s
                 ORDER BY history_id DESC
                 LIMIT %s OFFSET %s
                 """
-                call_data = await execute_async_query(connection, query, (START_DATE_TIMESTAMP, CONFIG['LIMIT'], offset))
-                if not call_data:
-                    break
-                await process_calls(call_data, connection, checklists, lock)
-                offset += CONFIG['LIMIT']
+            call_data = await execute_async_query(connection, query, (START_DATE_TIMESTAMP, CONFIG['LIMIT'], offset))
+            if not call_data:
+                break
+            await process_calls(call_data, connection, checklists, lock)
+            offset += CONFIG['LIMIT']
+            # Добавляем обработку сигналов
+            await asyncio.sleep(0.1)
+    except asyncio.CancelledError:
+        logger.info("Основная задача отменена.")
+        raise
     except Exception as e:
         logger.exception(f"Ошибка при выполнении основного цикла: {e}")
     finally:
@@ -252,28 +269,49 @@ async def main():
             logger.info("Соединение с базой данных закрыто")
 
 
-@app.route('/api/call_history')
-async def get_call_history():
-    """API для получения истории звонков."""
-    conn = await get_db_connection()
-    if not conn:
-        return jsonify({"error": "Не удалось подключиться к базе данных"}), 500
-    
-    query = "SELECT * FROM call_history WHERE context_start_time >= %s"
-    async with conn.cursor() as cursor:
-        await cursor.execute(query, (START_DATE_TIMESTAMP,))
-        rows = await cursor.fetchall()
-        calls = [dict(zip([col[0] for col in cursor.description], row)) for row in rows]
-    conn.close()
-    return jsonify(calls)
 
-@app.route('/<path:filename>')
-async def serve_static(filename):
-    """Обслуживание статических файлов."""
-    return await send_from_directory('static', filename)
+@app.route('/api/calls', methods=['GET'])
+async def get_calls():
+    conn = await get_db_connection()
+    if conn is None:
+        return jsonify({'error': 'Ошибка подключения к базе данных'}), 500
+
+    try:
+        async with conn.execute('SELECT * FROM calls') as cursor:
+            calls = await cursor.fetchall()
+            return jsonify([dict(ix) for ix in calls])
+    except Exception as e:
+        logger.exception(f"Ошибка при выполнении запроса к базе данных: {e}")
+        return jsonify({'error': 'Ошибка при выполнении запроса к базе данных'}), 500
+    finally:
+        await conn.close()
+
+@app.route('/')
+async def index():
+    return await render_template('index.html')
+
+@app.route('/call_history')
+async def call_history():
+    return await render_template('call_history.html')
+
+@app.route('/frontend/styles.css')
+async def styles():
+    return await send_from_directory('static/frontend', 'styles.css')
+
+@app.route('/frontend/scripts.js')
+async def scripts():
+    return await send_from_directory('static/frontend', 'scripts.js')
+
+def run_flask():
+    app.run(host='0.0.0.0', port=5005, debug=True)
 
 if __name__ == '__main__':
     check_and_clear_logs()
-    flask_thread = threading.Thread(target=app.run, kwargs={"host": "0.0.0.0", "port": 5005, "debug": True})
+    flask_thread = threading.Thread(target=run_flask)
     flask_thread.start()
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Получен сигнал прерывания от пользователя (Ctrl+C). Завершение программы.")
+    finally:
+        logger.info("Программа завершена.")

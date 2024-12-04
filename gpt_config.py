@@ -47,7 +47,10 @@ async def analyze_call_with_gpt(transcript, checklists):
     except KeyError as e:
         logger.error(f"Ошибка: ключ {e} не найден в checklists. Проверьте структуру данных.")
         return None, None, None, None, None
-
+    
+    ###Критерии:
+    ###{criteria_text}###
+    
     prompt = f"""
     Анализ звонка:
     Расшифровка звонка: {transcript}
@@ -56,11 +59,10 @@ async def analyze_call_with_gpt(transcript, checklists):
     Категории:
     {categories_text}
 
-    Критерии:
-    {criteria_text}
 
     Дайте оценку по каждому пункту от 0 до 10. Ответ необходимо дать в формате:
-    "Категория звонка: <Название категории< number_category=<Номер категории>"
+    "Категория звонка: <Название категории>"
+    Номер категории: <Номер категории>
     <Название критерия>: <оценка>
 
     1. <Название критерия>: <оценка>/10 — <Подробное объяснение по данному критерию с рекомендациями при необходимости>
@@ -113,11 +115,12 @@ async def analyze_call_with_gpt(transcript, checklists):
         # Установка `score` как извлеченного среднего значения или 0, если значение отсутствует
         score = average_score if average_score is not None else 0
 
-        # Извлечение категории звонка и номера категории
-        category_match = re.search(r'Категория звонка: ([\w\s]+)', result_text)
-        number_category_match = re.search(r'number_category=(\d+)', result_text)
-
+        # Извлечение категории звонка
+        category_match = re.search(r'Категория звонка: (.+)', result_text)
         call_category = category_match.group(1).strip() if category_match else "Не определено"
+
+        # Извлечение номера категории
+        number_category_match = re.search(r'Номер категории: (\d+)', result_text)
         category_number = int(number_category_match.group(1)) if number_category_match else None
 
         
@@ -144,12 +147,22 @@ async def analyze_call_with_gpt(transcript, checklists):
         # Генерация оценок по каждому пункту чек-листа
         criteria_scores = []
         for criterion in checklist_result.split("\n"):
-            criterion_score_match = re.search(rf'{re.escape(criterion.strip())}: (\d+(\.\d+)?)', result_text)
-            criterion_score = float(criterion_score_match.group(1)) if criterion_score_match else 0
-            criteria_scores.append((criterion.strip(), criterion_score))
+            criterion = criterion.strip()
+            if not criterion:
+                continue  # Пропускаем пустые строки
+            criterion = str(criterion)  # Преобразуем в строку или используем аннотацию типа
+            # Ищем оценку по текущему критерию в тексте ответа модели
+            escaped_criterion = re.escape(criterion)
+            pattern = rf'{escaped_criterion}: (\d+(\.\d+)?)/10'
+            criterion_score_match = re.search(pattern, result_text)
+            if criterion_score_match:
+                criterion_score = float(criterion_score_match.group(1))
+                criteria_scores.append((criterion, criterion_score))
+        # Если не требуется добавлять раздел с чек-листом и оценками, просто используем result_text
+        analyzed_result = result_text
 
         # Формирование строки результата
-        analyzed_result = f"{result_text}\nЧек-лист и оценки:\n" + "\n".join([f"{criterion}: {score}" for criterion, score in criteria_scores])
+        #analyzed_result = f"{result_text}\nЧек-лист и оценки:\n" + "\n".join([f"{criterion}: {score}" for criterion, score in criteria_scores])
 
         logger.info(f"Returning from analyze_call_with_gpt: score={score}, analyzed_result={analyzed_result}, call_category_clean={call_category_clean}, category_number={category_number}, checklist_result={checklist_result}")
         return score, analyzed_result,call_category_clean, category_number, checklist_result
