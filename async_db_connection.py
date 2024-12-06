@@ -1,3 +1,4 @@
+#async_db_connection.py
 import aiomysql
 import logging
 from dotenv import load_dotenv
@@ -6,76 +7,115 @@ import os
 # Загрузка переменных окружения
 load_dotenv()
 
+#**Тут тестовый запрос как у нас будет загружаться база данных и что выдавать какие значения, используем в отладках и тестах**
+# Загрузка файла .env
+#if load_dotenv():
+    #print("Файл .env успешно загружен")
+#else:
+#    print("Файл .env не найден или не загружен")
+
+# Проверка значений переменных
+#print("DB_HOST:", os.getenv("DB_HOST"))
+#print("DB_PORT:", os.getenv("DB_PORT"))
+#print("DB_USER:", os.getenv("DB_USER"))
+#print("DB_PASSWORD:", os.getenv("DB_PASSWORD"))
+#print("DB_NAME:", os.getenv("DB_NAME"))
+
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-async def create_async_connection():
-    """Создание асинхронного подключения к базе данных MySQL."""
-    logger.info("Попытка асинхронного подключения к базе данных MySQL...")
-    try:
-        connection = await aiomysql.connect(
-            host=os.getenv("DB_HOST"),
-            user=os.getenv("DB_USER"),
-            password=os.getenv("DB_PASSWORD"),
-            db=os.getenv("DB_NAME"),
-            port=int(os.getenv("DB_PORT")),
+
+
+class ConnectionPool:
+    """Класс для управления пулом соединений MySQL."""
+    def __init__(self):
+        self._pool = None
+
+    async def initialize(self, host, user, password, db, port, minsize=1, maxsize=10):
+        """Инициализация пула соединений."""
+        logger.info("Инициализация пула соединений MySQL...")
+        self._pool = await aiomysql.create_pool(
+            host=host,
+            user=user,
+            password=password,
+            db=db,
+            port=port,
+            minsize=minsize,
+            maxsize=maxsize,
             cursorclass=aiomysql.DictCursor,
             autocommit=True
         )
-        logger.info("Подключение к серверу MySQL успешно установлено")
-        return connection
-    except aiomysql.Error as e:
-        logger.error(f"Произошла ошибка '{e}' при подключении к базе данных.")
-        return None
+        logger.info("Пул соединений MySQL успешно создан.")
 
-async def execute_async_query(connection, query, params=None, retries=3):
-    """Выполнение асинхронного SQL-запроса с поддержкой повторных попыток."""
+    async def get_connection(self):
+        """Получение соединения из пула.
+        
+        Возвращает объект подключения (connection) из пула.
+        """
+        if not self._pool:
+            raise RuntimeError("Пул соединений не инициализирован.")
+        return await self._pool.acquire()
+
+    async def release_connection(self, connection):
+        """Возврат соединения в пул."""
+        if self._pool and connection:
+            self._pool.release(connection)
+
+    async def close(self):
+        """Закрытие пула соединений."""
+        if self._pool:
+            self._pool.close()
+            await self._pool.wait_closed()
+            logger.info("Пул соединений MySQL закрыт.")
+
+async def execute_async_query(pool, query, params=None, retries=3):
+    """
+    Выполнение асинхронного SQL-запроса с поддержкой пула соединений.
+
+    Внимание:
+    - Аргумент `pool` должен быть экземпляром класса ConnectionPool.
+    Нельзя передавать сюда объект типа `connection` или любые другие объекты.
+    Если вы получили ошибку 'Connection' object has no attribute 'get_connection',
+    значит вместо пула был передан объект подключения или что-то иное.
+
+    Параметры:
+    - pool: объект класса ConnectionPool, через который получаем соединение
+    - query: SQL-запрос (строка)
+    - params: параметры для подстановки в запрос (по умолчанию None)
+    - retries: число повторных попыток (по умолчанию 3)
+
+    Возвращает:
+    - список словарей с результатами запроса или None, если запрос не удался.
+    """
+    # Дополнительная защита от неправильного использования:
+    if not isinstance(pool, ConnectionPool):
+        raise TypeError("Параметр 'pool' должен быть экземпляром ConnectionPool.")
+
+    connection = None
     for attempt in range(retries):
         try:
+            # Получаем соединение из пула
+            connection = await pool.get_connection()
             async with connection.cursor() as cursor:
                 await cursor.execute(query, params)
                 result = await cursor.fetchall()
-                logger.info(f"Запрос успешно выполнен, получено {len(result)} записей")
+                logger.info(f"Запрос выполнен успешно, получено {len(result)} записей.")
                 return result
         except aiomysql.Error as e:
-            logger.error(f"Произошла ошибка '{e}' при выполнении запроса: {query}")
-            if e.args[0] in (2013, 2006):  # MySQL server has gone away, Lost connection to MySQL server during query
-                logger.info("Попытка повторного подключения...")
-                await connection.close()  # Исправлено: закрываем соединение
-                connection = await create_async_connection()
-                if connection is None:
-                    logger.error("Не удалось установить новое соединение с базой данных.")
-                    return None
-            else:
-                logger.error("Ошибка не связана с потерей соединения, повторное подключение не предпринято.")
-                return None
+            logger.error(f"Ошибка при выполнении запроса: {e}")
+            # Если соединение пропало, попробуем повторить
+            if e.args and e.args[0] in (2013, 2006):
+                logger.info("Повторное подключение...")
+                continue
+            break
         except Exception as e:
             logger.exception(f"Неизвестная ошибка при выполнении запроса: {e}")
-            return None
+            break
+        finally:
+            # Если соединение было взято из пула, возвращаем его обратно
+            if connection:
+                await pool.release_connection(connection)
 
-    logger.error(f"Не удалось выполнить запрос после {retries} попыток")
+    logger.error(f"Не удалось выполнить запрос после {retries} попыток.")
     return None
-
-async def main():
-    """Тестирование подключения и выполнения запроса."""
-    connection = await create_async_connection()
-    if connection is None:
-        logger.error("Не удалось подключиться к базе данных.")
-        return
-
-    try:
-        query = "SELECT COUNT(*) AS count FROM call_history;"
-        result = await execute_async_query(connection, query)
-        if result:
-            logger.info(f"Тестовый запрос выполнен успешно: {result}")
-        else:
-            logger.error("Тестовый запрос вернул пустой результат или произошла ошибка.")
-    finally:
-        if connection is not None:
-            await connection.close()  # Исправлено: корректное закрытие соединения
-            logger.info("Соединение с базой данных закрыто")
-
-if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())

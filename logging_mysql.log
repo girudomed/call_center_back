@@ -1,0 +1,311 @@
+2024-12-06 16:04:09,131 - INFO - Handler Status:
+2024-12-06 16:04:09,131 - INFO - Handler_commit: 7
+2024-12-06 16:04:09,133 - INFO - Handler_delete: 0
+2024-12-06 16:04:09,133 - INFO - Handler_discover: 0
+2024-12-06 16:04:09,133 - INFO - Handler_external_lock: 98
+2024-12-06 16:04:09,133 - INFO - Handler_mrr_init: 0
+2024-12-06 16:04:09,134 - INFO - Handler_prepare: 0
+2024-12-06 16:04:09,134 - INFO - Handler_read_first: 1
+2024-12-06 16:04:09,134 - INFO - Handler_read_key: 45
+2024-12-06 16:04:09,134 - INFO - Handler_read_last: 0
+2024-12-06 16:04:09,134 - INFO - Handler_read_next: 177
+2024-12-06 16:04:09,134 - INFO - Handler_read_prev: 0
+2024-12-06 16:04:09,135 - INFO - Handler_read_rnd: 0
+2024-12-06 16:04:09,135 - INFO - Handler_read_rnd_next: 13
+2024-12-06 16:04:09,135 - INFO - Handler_rollback: 0
+2024-12-06 16:04:09,135 - INFO - Handler_savepoint: 0
+2024-12-06 16:04:09,135 - INFO - Handler_savepoint_rollback: 0
+2024-12-06 16:04:09,135 - INFO - Handler_update: 0
+2024-12-06 16:04:09,136 - INFO - Handler_write: 0
+2024-12-06 16:04:09,255 - ERROR - Ошибка при логировании состояния базы данных: (1227, 'Access denied; you need (at least one of) the PROCESS privilege(s) for this operation')
+Traceback (most recent call last):
+  File "/Users/vitalyefimov/Projects/call_center_back/main.py", line 55, in log_db_state
+    await cursor.execute("SHOW ENGINE INNODB STATUS;")
+  File "/opt/anaconda3/lib/python3.11/site-packages/aiomysql/cursors.py", line 239, in execute
+    await self._query(query)
+  File "/opt/anaconda3/lib/python3.11/site-packages/aiomysql/cursors.py", line 457, in _query
+    await conn.query(q)
+  File "/opt/anaconda3/lib/python3.11/site-packages/aiomysql/connection.py", line 469, in query
+    await self._read_query_result(unbuffered=unbuffered)
+  File "/opt/anaconda3/lib/python3.11/site-packages/aiomysql/connection.py", line 683, in _read_query_result
+    await result.read()
+  File "/opt/anaconda3/lib/python3.11/site-packages/aiomysql/connection.py", line 1164, in read
+    first_packet = await self.connection._read_packet()
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.11/site-packages/aiomysql/connection.py", line 652, in _read_packet
+    packet.raise_for_error()
+  File "/opt/anaconda3/lib/python3.11/site-packages/pymysql/protocol.py", line 219, in raise_for_error
+    err.raise_mysql_exception(self._data)
+  File "/opt/anaconda3/lib/python3.11/site-packages/pymysql/err.py", line 150, in raise_mysql_exception
+    raise errorclass(errno, errval)
+pymysql.err.OperationalError: (1227, 'Access denied; you need (at least one of) the PROCESS privilege(s) for this operation')
+2024-12-06 16:06:02,307 - INFO - Handler Status:
+2024-12-06 16:06:02,312 - INFO - Handler_commit: 4
+2024-12-06 16:06:02,312 - INFO - Handler_delete: 0
+2024-12-06 16:06:02,312 - INFO - Handler_discover: 0
+2024-12-06 16:06:02,312 - INFO - Handler_external_lock: 8
+2024-12-06 16:06:02,312 - INFO - Handler_mrr_init: 0
+2024-12-06 16:06:02,312 - INFO - Handler_prepare: 0
+2024-12-06 16:06:02,312 - INFO - Handler_read_first: 1
+2024-12-06 16:06:02,312 - INFO - Handler_read_key: 4
+2024-12-06 16:06:02,312 - INFO - Handler_read_last: 0
+2024-12-06 16:06:02,312 - INFO - Handler_read_next: 0
+2024-12-06 16:06:02,312 - INFO - Handler_read_prev: 0
+2024-12-06 16:06:02,313 - INFO - Handler_read_rnd: 0
+2024-12-06 16:06:02,313 - INFO - Handler_read_rnd_next: 13
+2024-12-06 16:06:02,313 - INFO - Handler_rollback: 0
+2024-12-06 16:06:02,315 - INFO - Handler_savepoint: 0
+2024-12-06 16:06:02,315 - INFO - Handler_savepoint_rollback: 0
+2024-12-06 16:06:02,316 - INFO - Handler_update: 0
+2024-12-06 16:06:02,316 - INFO - Handler_write: 0
+2024-12-06 16:06:02,434 - WARNING - Пропущено логирование InnoDB: (1227, 'Access denied; you need (at least one of) the PROCESS privilege(s) for this operation')
+2024-12-06 16:06:02,434 - INFO - Состояние базы данных успешно записано.
+2024-12-06 16:11:45,031 - ERROR - Ошибка при логировании состояния базы данных: readexactly() called while another coroutine is already waiting for incoming data
+Traceback (most recent call last):
+  File "/Users/vitalyefimov/Projects/call_center_back/main.py", line 49, in log_db_state
+    await cursor.execute("SHOW PROFILE ALL;")
+  File "/opt/anaconda3/lib/python3.11/site-packages/aiomysql/cursors.py", line 239, in execute
+    await self._query(query)
+  File "/opt/anaconda3/lib/python3.11/site-packages/aiomysql/cursors.py", line 457, in _query
+    await conn.query(q)
+  File "/opt/anaconda3/lib/python3.11/site-packages/aiomysql/connection.py", line 469, in query
+    await self._read_query_result(unbuffered=unbuffered)
+  File "/opt/anaconda3/lib/python3.11/site-packages/aiomysql/connection.py", line 683, in _read_query_result
+    await result.read()
+  File "/opt/anaconda3/lib/python3.11/site-packages/aiomysql/connection.py", line 1164, in read
+    first_packet = await self.connection._read_packet()
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.11/site-packages/aiomysql/connection.py", line 609, in _read_packet
+    packet_header = await self._read_bytes(4)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.11/site-packages/aiomysql/connection.py", line 657, in _read_bytes
+    data = await self._reader.readexactly(num_bytes)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.11/asyncio/streams.py", line 750, in readexactly
+    await self._wait_for_data('readexactly')
+  File "/opt/anaconda3/lib/python3.11/asyncio/streams.py", line 529, in _wait_for_data
+    raise RuntimeError(
+RuntimeError: readexactly() called while another coroutine is already waiting for incoming data
+2024-12-06 16:11:53,378 - ERROR - Ошибка при логировании состояния базы данных: readexactly() called while another coroutine is already waiting for incoming data
+Traceback (most recent call last):
+  File "/Users/vitalyefimov/Projects/call_center_back/main.py", line 49, in log_db_state
+    await cursor.execute("SHOW PROFILE ALL;")
+  File "/opt/anaconda3/lib/python3.11/site-packages/aiomysql/cursors.py", line 239, in execute
+    await self._query(query)
+  File "/opt/anaconda3/lib/python3.11/site-packages/aiomysql/cursors.py", line 457, in _query
+    await conn.query(q)
+  File "/opt/anaconda3/lib/python3.11/site-packages/aiomysql/connection.py", line 469, in query
+    await self._read_query_result(unbuffered=unbuffered)
+  File "/opt/anaconda3/lib/python3.11/site-packages/aiomysql/connection.py", line 683, in _read_query_result
+    await result.read()
+  File "/opt/anaconda3/lib/python3.11/site-packages/aiomysql/connection.py", line 1164, in read
+    first_packet = await self.connection._read_packet()
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.11/site-packages/aiomysql/connection.py", line 609, in _read_packet
+    packet_header = await self._read_bytes(4)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.11/site-packages/aiomysql/connection.py", line 657, in _read_bytes
+    data = await self._reader.readexactly(num_bytes)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.11/asyncio/streams.py", line 750, in readexactly
+    await self._wait_for_data('readexactly')
+  File "/opt/anaconda3/lib/python3.11/asyncio/streams.py", line 529, in _wait_for_data
+    raise RuntimeError(
+RuntimeError: readexactly() called while another coroutine is already waiting for incoming data
+2024-12-06 16:16:14,881 - ERROR - Ошибка при логировании состояния базы данных: readexactly() called while another coroutine is already waiting for incoming data
+Traceback (most recent call last):
+  File "/Users/vitalyefimov/Projects/call_center_back/main.py", line 50, in log_db_state
+    await cursor.execute("SHOW PROFILE ALL;")
+  File "/opt/anaconda3/lib/python3.11/site-packages/aiomysql/cursors.py", line 239, in execute
+    await self._query(query)
+  File "/opt/anaconda3/lib/python3.11/site-packages/aiomysql/cursors.py", line 457, in _query
+    await conn.query(q)
+  File "/opt/anaconda3/lib/python3.11/site-packages/aiomysql/connection.py", line 469, in query
+    await self._read_query_result(unbuffered=unbuffered)
+  File "/opt/anaconda3/lib/python3.11/site-packages/aiomysql/connection.py", line 683, in _read_query_result
+    await result.read()
+  File "/opt/anaconda3/lib/python3.11/site-packages/aiomysql/connection.py", line 1164, in read
+    first_packet = await self.connection._read_packet()
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.11/site-packages/aiomysql/connection.py", line 609, in _read_packet
+    packet_header = await self._read_bytes(4)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.11/site-packages/aiomysql/connection.py", line 657, in _read_bytes
+    data = await self._reader.readexactly(num_bytes)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.11/asyncio/streams.py", line 750, in readexactly
+    await self._wait_for_data('readexactly')
+  File "/opt/anaconda3/lib/python3.11/asyncio/streams.py", line 529, in _wait_for_data
+    raise RuntimeError(
+RuntimeError: readexactly() called while another coroutine is already waiting for incoming data
+2024-12-06 16:23:51,719 - ERROR - Ошибка при логировании состояния базы данных: readexactly() called while another coroutine is already waiting for incoming data
+Traceback (most recent call last):
+  File "/Users/vitalyefimov/Projects/call_center_back/main.py", line 50, in log_db_state
+    await cursor.execute("SHOW PROFILE ALL;")
+  File "/opt/anaconda3/lib/python3.11/site-packages/aiomysql/cursors.py", line 239, in execute
+    await self._query(query)
+  File "/opt/anaconda3/lib/python3.11/site-packages/aiomysql/cursors.py", line 457, in _query
+    await conn.query(q)
+  File "/opt/anaconda3/lib/python3.11/site-packages/aiomysql/connection.py", line 469, in query
+    await self._read_query_result(unbuffered=unbuffered)
+  File "/opt/anaconda3/lib/python3.11/site-packages/aiomysql/connection.py", line 683, in _read_query_result
+    await result.read()
+  File "/opt/anaconda3/lib/python3.11/site-packages/aiomysql/connection.py", line 1164, in read
+    first_packet = await self.connection._read_packet()
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.11/site-packages/aiomysql/connection.py", line 609, in _read_packet
+    packet_header = await self._read_bytes(4)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.11/site-packages/aiomysql/connection.py", line 657, in _read_bytes
+    data = await self._reader.readexactly(num_bytes)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.11/asyncio/streams.py", line 750, in readexactly
+    await self._wait_for_data('readexactly')
+  File "/opt/anaconda3/lib/python3.11/asyncio/streams.py", line 529, in _wait_for_data
+    raise RuntimeError(
+RuntimeError: readexactly() called while another coroutine is already waiting for incoming data
+2024-12-06 16:51:19,292 - ERROR - Ошибка при логировании состояния БД: 'ConnectionPool' object has no attribute 'cursor'
+2024-12-06 16:54:24,142 - INFO - Handler_commit: 0
+2024-12-06 16:54:24,142 - INFO - Handler_delete: 0
+2024-12-06 16:54:24,143 - INFO - Handler_discover: 0
+2024-12-06 16:54:24,143 - INFO - Handler_external_lock: 0
+2024-12-06 16:54:24,144 - INFO - Handler_mrr_init: 0
+2024-12-06 16:54:24,144 - INFO - Handler_prepare: 0
+2024-12-06 16:54:24,144 - INFO - Handler_read_first: 0
+2024-12-06 16:54:24,144 - INFO - Handler_read_key: 0
+2024-12-06 16:54:24,144 - INFO - Handler_read_last: 0
+2024-12-06 16:54:24,145 - INFO - Handler_read_next: 0
+2024-12-06 16:54:24,145 - INFO - Handler_read_prev: 0
+2024-12-06 16:54:24,145 - INFO - Handler_read_rnd: 0
+2024-12-06 16:54:24,145 - INFO - Handler_read_rnd_next: 0
+2024-12-06 16:54:24,145 - INFO - Handler_rollback: 0
+2024-12-06 16:54:24,148 - INFO - Handler_savepoint: 0
+2024-12-06 16:54:24,148 - INFO - Handler_savepoint_rollback: 0
+2024-12-06 16:54:24,148 - INFO - Handler_update: 0
+2024-12-06 16:54:24,148 - INFO - Handler_write: 0
+2024-12-06 17:05:08,503 - INFO - Handler_commit: 0
+2024-12-06 17:05:08,504 - INFO - Handler_delete: 0
+2024-12-06 17:05:08,504 - INFO - Handler_discover: 0
+2024-12-06 17:05:08,504 - INFO - Handler_external_lock: 0
+2024-12-06 17:05:08,505 - INFO - Handler_mrr_init: 0
+2024-12-06 17:05:08,505 - INFO - Handler_prepare: 0
+2024-12-06 17:05:08,505 - INFO - Handler_read_first: 0
+2024-12-06 17:05:08,505 - INFO - Handler_read_key: 0
+2024-12-06 17:05:08,505 - INFO - Handler_read_last: 0
+2024-12-06 17:05:08,505 - INFO - Handler_read_next: 0
+2024-12-06 17:05:08,505 - INFO - Handler_read_prev: 0
+2024-12-06 17:05:08,505 - INFO - Handler_read_rnd: 0
+2024-12-06 17:05:08,506 - INFO - Handler_read_rnd_next: 0
+2024-12-06 17:05:08,506 - INFO - Handler_rollback: 0
+2024-12-06 17:05:08,506 - INFO - Handler_savepoint: 0
+2024-12-06 17:05:08,506 - INFO - Handler_savepoint_rollback: 0
+2024-12-06 17:05:08,506 - INFO - Handler_update: 0
+2024-12-06 17:05:08,506 - INFO - Handler_write: 0
+2024-12-06 17:14:28,731 - INFO - Handler_commit: 0
+2024-12-06 17:14:28,732 - INFO - Handler_delete: 0
+2024-12-06 17:14:28,732 - INFO - Handler_discover: 0
+2024-12-06 17:14:28,732 - INFO - Handler_external_lock: 0
+2024-12-06 17:14:28,732 - INFO - Handler_mrr_init: 0
+2024-12-06 17:14:28,732 - INFO - Handler_prepare: 0
+2024-12-06 17:14:28,732 - INFO - Handler_read_first: 0
+2024-12-06 17:14:28,732 - INFO - Handler_read_key: 0
+2024-12-06 17:14:28,732 - INFO - Handler_read_last: 0
+2024-12-06 17:14:28,732 - INFO - Handler_read_next: 0
+2024-12-06 17:14:28,732 - INFO - Handler_read_prev: 0
+2024-12-06 17:14:28,732 - INFO - Handler_read_rnd: 0
+2024-12-06 17:14:28,732 - INFO - Handler_read_rnd_next: 0
+2024-12-06 17:14:28,733 - INFO - Handler_rollback: 0
+2024-12-06 17:14:28,733 - INFO - Handler_savepoint: 0
+2024-12-06 17:14:28,733 - INFO - Handler_savepoint_rollback: 0
+2024-12-06 17:14:28,733 - INFO - Handler_update: 0
+2024-12-06 17:14:28,733 - INFO - Handler_write: 0
+2024-12-06 17:25:20,292 - INFO - Handler_commit: 0
+2024-12-06 17:25:20,293 - INFO - Handler_delete: 0
+2024-12-06 17:25:20,294 - INFO - Handler_discover: 0
+2024-12-06 17:25:20,294 - INFO - Handler_external_lock: 0
+2024-12-06 17:25:20,294 - INFO - Handler_mrr_init: 0
+2024-12-06 17:25:20,294 - INFO - Handler_prepare: 0
+2024-12-06 17:25:20,294 - INFO - Handler_read_first: 0
+2024-12-06 17:25:20,294 - INFO - Handler_read_key: 0
+2024-12-06 17:25:20,294 - INFO - Handler_read_last: 0
+2024-12-06 17:25:20,294 - INFO - Handler_read_next: 0
+2024-12-06 17:25:20,295 - INFO - Handler_read_prev: 0
+2024-12-06 17:25:20,295 - INFO - Handler_read_rnd: 0
+2024-12-06 17:25:20,295 - INFO - Handler_read_rnd_next: 0
+2024-12-06 17:25:20,295 - INFO - Handler_rollback: 0
+2024-12-06 17:25:20,295 - INFO - Handler_savepoint: 0
+2024-12-06 17:25:20,296 - INFO - Handler_savepoint_rollback: 0
+2024-12-06 17:25:20,296 - INFO - Handler_update: 0
+2024-12-06 17:25:20,296 - INFO - Handler_write: 0
+2024-12-06 17:41:07,713 - INFO - Handler_commit: 2
+2024-12-06 17:41:07,714 - INFO - Handler_delete: 0
+2024-12-06 17:41:07,714 - INFO - Handler_discover: 0
+2024-12-06 17:41:07,715 - INFO - Handler_external_lock: 32
+2024-12-06 17:41:07,715 - INFO - Handler_mrr_init: 0
+2024-12-06 17:41:07,715 - INFO - Handler_prepare: 0
+2024-12-06 17:41:07,715 - INFO - Handler_read_first: 0
+2024-12-06 17:41:07,715 - INFO - Handler_read_key: 18
+2024-12-06 17:41:07,715 - INFO - Handler_read_last: 0
+2024-12-06 17:41:07,715 - INFO - Handler_read_next: 68
+2024-12-06 17:41:07,715 - INFO - Handler_read_prev: 0
+2024-12-06 17:41:07,715 - INFO - Handler_read_rnd: 0
+2024-12-06 17:41:07,715 - INFO - Handler_read_rnd_next: 0
+2024-12-06 17:41:07,715 - INFO - Handler_rollback: 0
+2024-12-06 17:41:07,715 - INFO - Handler_savepoint: 0
+2024-12-06 17:41:07,716 - INFO - Handler_savepoint_rollback: 0
+2024-12-06 17:41:07,716 - INFO - Handler_update: 0
+2024-12-06 17:41:07,716 - INFO - Handler_write: 0
+2024-12-06 17:42:33,834 - INFO - Handler_commit: 1
+2024-12-06 17:42:33,835 - INFO - Handler_delete: 0
+2024-12-06 17:42:33,835 - INFO - Handler_discover: 0
+2024-12-06 17:42:33,835 - INFO - Handler_external_lock: 2
+2024-12-06 17:42:33,835 - INFO - Handler_mrr_init: 0
+2024-12-06 17:42:33,835 - INFO - Handler_prepare: 0
+2024-12-06 17:42:33,835 - INFO - Handler_read_first: 0
+2024-12-06 17:42:33,835 - INFO - Handler_read_key: 1
+2024-12-06 17:42:33,835 - INFO - Handler_read_last: 0
+2024-12-06 17:42:33,836 - INFO - Handler_read_next: 0
+2024-12-06 17:42:33,836 - INFO - Handler_read_prev: 0
+2024-12-06 17:42:33,836 - INFO - Handler_read_rnd: 0
+2024-12-06 17:42:33,836 - INFO - Handler_read_rnd_next: 0
+2024-12-06 17:42:33,836 - INFO - Handler_rollback: 0
+2024-12-06 17:42:33,836 - INFO - Handler_savepoint: 0
+2024-12-06 17:42:33,837 - INFO - Handler_savepoint_rollback: 0
+2024-12-06 17:42:33,837 - INFO - Handler_update: 0
+2024-12-06 17:42:33,837 - INFO - Handler_write: 0
+2024-12-06 17:46:59,549 - INFO - Handler_commit: 35
+2024-12-06 17:46:59,550 - INFO - Handler_delete: 0
+2024-12-06 17:46:59,550 - INFO - Handler_discover: 0
+2024-12-06 17:46:59,550 - INFO - Handler_external_lock: 70
+2024-12-06 17:46:59,550 - INFO - Handler_mrr_init: 0
+2024-12-06 17:46:59,551 - INFO - Handler_prepare: 0
+2024-12-06 17:46:59,551 - INFO - Handler_read_first: 2
+2024-12-06 17:46:59,551 - INFO - Handler_read_key: 963
+2024-12-06 17:46:59,552 - INFO - Handler_read_last: 0
+2024-12-06 17:46:59,552 - INFO - Handler_read_next: 3103
+2024-12-06 17:46:59,552 - INFO - Handler_read_prev: 0
+2024-12-06 17:46:59,552 - INFO - Handler_read_rnd: 0
+2024-12-06 17:46:59,552 - INFO - Handler_read_rnd_next: 12
+2024-12-06 17:46:59,552 - INFO - Handler_rollback: 0
+2024-12-06 17:46:59,552 - INFO - Handler_savepoint: 0
+2024-12-06 17:46:59,552 - INFO - Handler_savepoint_rollback: 0
+2024-12-06 17:46:59,552 - INFO - Handler_update: 0
+2024-12-06 17:46:59,552 - INFO - Handler_write: 0
+2024-12-06 17:47:25,361 - INFO - Handler_commit: 1
+2024-12-06 17:47:25,361 - INFO - Handler_delete: 0
+2024-12-06 17:47:25,361 - INFO - Handler_discover: 0
+2024-12-06 17:47:25,362 - INFO - Handler_external_lock: 2
+2024-12-06 17:47:25,362 - INFO - Handler_mrr_init: 0
+2024-12-06 17:47:25,362 - INFO - Handler_prepare: 0
+2024-12-06 17:47:25,362 - INFO - Handler_read_first: 0
+2024-12-06 17:47:25,362 - INFO - Handler_read_key: 1
+2024-12-06 17:47:25,362 - INFO - Handler_read_last: 0
+2024-12-06 17:47:25,362 - INFO - Handler_read_next: 0
+2024-12-06 17:47:25,362 - INFO - Handler_read_prev: 0
+2024-12-06 17:47:25,363 - INFO - Handler_read_rnd: 0
+2024-12-06 17:47:25,363 - INFO - Handler_read_rnd_next: 0
+2024-12-06 17:47:25,363 - INFO - Handler_rollback: 0
+2024-12-06 17:47:25,363 - INFO - Handler_savepoint: 0
+2024-12-06 17:47:25,363 - INFO - Handler_savepoint_rollback: 0
+2024-12-06 17:47:25,363 - INFO - Handler_update: 0
+2024-12-06 17:47:25,364 - INFO - Handler_write: 0

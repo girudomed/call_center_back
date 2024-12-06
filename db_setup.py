@@ -26,65 +26,60 @@ async def create_async_connection():
         logger.error(f"Произошла ошибка '{e}' при подключении к базе данных.")
         return None
 
-async def create_tables(connection):
+async def create_tables(pool):
     logger.info("Создание необходимых таблиц, если они не существуют...")
-    async with connection.cursor() as cursor:
-        try:
-            await cursor.execute("""
-            CREATE TABLE IF NOT EXISTS call_history (
-                history_id INT AUTO_INCREMENT PRIMARY KEY,
-                called_info VARCHAR(255),
-                caller_info VARCHAR(255),
-                talk_duration INT,
-                transcript TEXT,
-                context_start_time DATETIME,
-                created_at DATETIME
-            )
-            """)
+    queries = [
+        """CREATE TABLE IF NOT EXISTS call_history (
+            history_id INT AUTO_INCREMENT PRIMARY KEY,
+            called_info VARCHAR(255),
+            caller_info VARCHAR(255),
+            talk_duration INT,
+            transcript TEXT,
+            context_start_time DATETIME,
+            created_at DATETIME
+        )""",
+        """CREATE TABLE IF NOT EXISTS call_scores (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            history_id INT,
+            call_score FLOAT,
+            score_date DATETIME,
+            call_date DATETIME,
+            call_category VARCHAR(255),
+            called_info VARCHAR(255),
+            caller_info VARCHAR(255),
+            talk_duration INT,
+            transcript TEXT,
+            result TEXT,
+            number_checklist INT,
+            category_checklist TEXT,
+            FOREIGN KEY (history_id) REFERENCES call_history(history_id)
+        )""",
+        """CREATE TABLE IF NOT EXISTS check_list (
+            Number_check_list INT AUTO_INCREMENT PRIMARY KEY,
+            Check_list_categories VARCHAR(255) NOT NULL,
+            description TEXT NOT NULL,
+            criteria_check_list TEXT NOT NULL,
+            type_criteria VARCHAR(255),
+            criterion_category VARCHAR(255)
+        )"""
+    ]
 
-            await cursor.execute("""
-            CREATE TABLE IF NOT EXISTS call_scores (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                history_id INT,
-                call_score FLOAT,
-                score_date DATETIME,
-                call_date DATETIME,
-                call_category VARCHAR(255),
-                called_info VARCHAR(255),
-                caller_info VARCHAR(255),
-                talk_duration INT,
-                transcript TEXT,
-                result TEXT,
-                number_checklist INT,
-                category_checklist TEXT,
-                FOREIGN KEY (history_id) REFERENCES call_history(history_id)
-            )
-            """)
+    for q in queries:
+        res = await execute_async_query(pool, q)
+        if res is None:
+            # Если вернуло None, значит запрос не выполнился, логируем или решаем, что делать
+            logger.error("Не удалось создать таблицы. Остановка.")
+            return
 
-            await cursor.execute("""
-            CREATE TABLE IF NOT EXISTS check_list (
-                Number_check_list INT AUTO_INCREMENT PRIMARY KEY,
-                Check_list_categories VARCHAR(255) NOT NULL,
-                description TEXT NOT NULL,
-                criteria_check_list TEXT NOT NULL,
-                type_criteria VARCHAR(255),
-                criterion_category VARCHAR(255)
-            )
-            """)
+    logger.info("Все таблицы успешно созданы или уже существуют.")
 
-            await connection.commit()
-            logger.info("Все таблицы успешно созданы или уже существуют.")
-        except Exception as e:
-            logger.error(f"Произошла ошибка '{e}' при создании таблиц.")
-            await connection.rollback()
-
-async def get_checklists_and_criteria(connection):
+async def get_checklists_and_criteria(pool):
     logger.info("Получение чек-листов и критериев из базы данных...")
     query = """
     SELECT Number_check_list, Check_list_categories, description, criteria_check_list, type_criteria, criterion_category, scoring_method, fatal_error, max_score
     FROM check_list
     """
-    checklists = await execute_async_query(connection, query)
+    checklists = await execute_async_query(pool, query)
     return checklists if checklists else []
 
 async def main():

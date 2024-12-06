@@ -112,7 +112,8 @@ async def create_connection():
             user='your_user',
             password='your_password',
             db='your_database',
-            autocommit=False
+            autocommit=True,
+            cursorclass=aiomysql.DictCursor,
         )
         return connection
     except Error as e:
