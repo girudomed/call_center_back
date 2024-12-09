@@ -20,7 +20,7 @@ import socket
 from logging.handlers import RotatingFileHandler
 import hypercorn.asyncio
 import hypercorn.config
-
+from app import setup_routes
 
 # Настройка логирования с ротацией
 db_logger = logging.getLogger('db_logger')
@@ -124,9 +124,6 @@ async def schedule_db_state_logging(logging_interval=200):
         except Exception as e:
             db_logger.error(f"Ошибка при логировании состояния БД: {e}")
         await asyncio.sleep(logging_interval)
-
-
-
 
 # Преобразование START_DATE в таймстемп для запросов
 START_DATE_TIMESTAMP = int(dt.datetime.strptime(CONFIG['START_DATE'], '%Y-%m-%d %H:%M:%S').timestamp())
@@ -273,6 +270,8 @@ async def main():
         await create_tables(pool)
         checklists = await get_checklists_and_criteria(pool)
         logger.info(f"Получены чек-листы: {checklists}")
+        # Передаём app и pool в setup_routes
+        setup_routes(app, pool)
 
         call_history_ids = await get_history_ids_from_call_history(pool)
         if call_history_ids is None:
@@ -315,30 +314,6 @@ async def main():
         logger.exception(f"Ошибка при выполнении основного цикла: {e}")
     finally:
         logger.info("Соединение с базой данных закрыто")
-
-@app.route('/api/calls', methods=['GET'])
-async def get_calls():
-    query = "SELECT * FROM calls"
-    result = await execute_async_query(pool, query)
-    if result is None:
-        return jsonify({"error": "Ошибка подключения к базе данных или выполнения запроса"}), 500
-    return jsonify([dict(ix) for ix in result])
-
-@app.route('/')
-async def index():
-    return await render_template('index.html')
-
-@app.route('/call_history')
-async def call_history():
-    return await render_template('call_history.html')
-
-@app.route('/frontend/styles.css')
-async def styles():
-    return await send_from_directory('static/frontend', 'styles.css')
-
-@app.route('/frontend/scripts.js')
-async def scripts():
-    return await send_from_directory('static/frontend', 'scripts.js')
 
 def run_flask():
     hypercorn_config = hypercorn.config.Config()
