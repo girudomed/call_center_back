@@ -302,7 +302,9 @@ async def main():
             """
             call_data = await execute_async_query(pool, query, (START_DATE_TIMESTAMP, CONFIG['LIMIT'], offset))
             if not call_data:
-                break
+                logger.info("Новых звонков нет, ожидаю...")
+                await asyncio.sleep(10)  # Ждем перед повторной проверкой
+                continue
 
             await process_calls(call_data, pool, checklists, lock)
             offset += CONFIG['LIMIT']

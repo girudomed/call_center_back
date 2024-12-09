@@ -4,30 +4,12 @@
 ### weight_criteria удалили отсюда как сам параметр, к нему не обращаемся
 
 import logging
-import aiomysql
 from async_db_connection import execute_async_query
 
 logger = logging.getLogger()
 
-async def create_async_connection():
-    logger.info("Попытка асинхронного подключения к базе данных MySQL...")
-    try:
-        connection = await aiomysql.connect(
-            host="82.97.254.49",
-            user="gen_user",
-            password="_7*sA:J_urBLo<p4:K2fOlQdb_ds",
-            db="mangoapi_db",
-            port=3306,
-            cursorclass=aiomysql.DictCursor,
-            autocommit=True  # Это может помочь избежать проблем с потерей соединения
-        )
-        logger.info("Подключено к серверу MySQL")
-        return connection
-    except aiomysql.Error as e:
-        logger.error(f"Произошла ошибка '{e}' при подключении к базе данных.")
-        return None
-
 async def create_tables(pool):
+    """Создание необходимых таблиц, если они не существуют."""
     logger.info("Создание необходимых таблиц, если они не существуют...")
     queries = [
         """CREATE TABLE IF NOT EXISTS call_history (
@@ -65,34 +47,26 @@ async def create_tables(pool):
         )"""
     ]
 
-    for q in queries:
-        res = await execute_async_query(pool, q)
-        if res is None:
-            # Если вернуло None, значит запрос не выполнился, логируем или решаем, что делать
-            logger.error("Не удалось создать таблицы. Остановка.")
-            return
+    for query in queries:
+        try:
+            await execute_async_query(pool, query)
+        except Exception as e:
+            logger.error(f"Ошибка при выполнении запроса на создание таблиц: {e}")
+            raise  # Прекращаем выполнение, если запрос не удался
 
     logger.info("Все таблицы успешно созданы или уже существуют.")
 
 async def get_checklists_and_criteria(pool):
+    """Получение чек-листов и критериев из базы данных."""
     logger.info("Получение чек-листов и критериев из базы данных...")
     query = """
-    SELECT Number_check_list, Check_list_categories, description, criteria_check_list, type_criteria, criterion_category, scoring_method, fatal_error, max_score
+    SELECT Number_check_list, Check_list_categories, description, criteria_check_list, 
+           type_criteria, criterion_category, scoring_method, fatal_error, max_score
     FROM check_list
     """
-    checklists = await execute_async_query(pool, query)
-    return checklists if checklists else []
-
-async def main():
-    connection = await create_async_connection()
-    if connection is None:
-        logger.error("Не удалось установить соединение с базой данных.")
-        return
     try:
-        await create_tables(connection)
-    finally:
-        connection.close()
-
-if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+        checklists = await execute_async_query(pool, query)
+        return checklists if checklists else []
+    except Exception as e:
+        logger.error(f"Ошибка при получении чек-листов: {e}")
+        return []
