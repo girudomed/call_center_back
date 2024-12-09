@@ -75,15 +75,46 @@ async def initialize_db_pool():
 async def close_db_pool():
     """Закрытие пула соединений."""
     await pool.close()
-
+    
+#Логируем состояние БДшки
 async def log_db_state():
     """Логирование состояния базы данных."""
-    # Предполагается, что вы хотите логировать Handler-метрики
-    query = "SHOW STATUS LIKE 'Handler%'"
-    result = await execute_async_query(pool, query)
-    if result:
-        for row in result:
-            db_logger.info(f"{row['Variable_name']}: {row['Value']}")
+    queries = {
+        "Threads_connected": "SHOW STATUS LIKE 'Threads_connected';",
+        "Threads_running": "SHOW STATUS LIKE 'Threads_running';",
+        "Connections": "SHOW STATUS LIKE 'Connections';",
+        "Questions": "SHOW STATUS LIKE 'Questions';",
+        "Queries": "SHOW STATUS LIKE 'Queries';",
+        "Slow_queries": "SHOW STATUS LIKE 'Slow_queries';",
+        "Qcache_hits": "SHOW STATUS LIKE 'Qcache_hits';",
+        "Qcache_inserts": "SHOW STATUS LIKE 'Qcache_inserts';",
+        "Qcache_not_cached": "SHOW STATUS LIKE 'Qcache_not_cached';",
+        "Open_tables": "SHOW STATUS LIKE 'Open_tables';",
+        "Opened_tables": "SHOW STATUS LIKE 'Opened_tables';",
+        "Table_locks_waited": "SHOW STATUS LIKE 'Table_locks_waited';",
+        "Table_locks_immediate": "SHOW STATUS LIKE 'Table_locks_immediate';",
+        "Handler_read_key": "SHOW STATUS LIKE 'Handler_read_key';",
+        "Handler_read_rnd_next": "SHOW STATUS LIKE 'Handler_read_rnd_next';",
+        "Max_used_connections": "SHOW STATUS LIKE 'Max_used_connections';",
+        "Aborted_clients": "SHOW STATUS LIKE 'Aborted_clients';",
+        "Aborted_connects": "SHOW STATUS LIKE 'Aborted_connects';",
+        "Innodb_buffer_pool_reads": "SHOW STATUS LIKE 'Innodb_buffer_pool_reads';",
+        "Innodb_buffer_pool_write_requests": "SHOW STATUS LIKE 'Innodb_buffer_pool_write_requests';",
+        "Innodb_rows_read": "SHOW STATUS LIKE 'Innodb_rows_read';",
+        "Innodb_rows_inserted": "SHOW STATUS LIKE 'Innodb_rows_inserted';",
+        "Innodb_rows_updated": "SHOW STATUS LIKE 'Innodb_rows_updated';",
+        "Innodb_rows_deleted": "SHOW STATUS LIKE 'Innodb_rows_deleted';",
+        "Uptime": "SHOW STATUS LIKE 'Uptime';",
+    }
+
+    for metric, query in queries.items():
+        try:
+            result = await execute_async_query(pool, query)
+            if result:
+                for row in result:
+                    db_logger.info(f"{row['Variable_name']}: {row['Value']}")
+        except Exception as e:
+            db_logger.error(f"Ошибка при выполнении запроса '{metric}': {e}")
 
 async def schedule_db_state_logging(logging_interval=200):
     while True:
