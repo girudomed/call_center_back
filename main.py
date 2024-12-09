@@ -8,6 +8,7 @@ import openai
 from datetime import datetime  # noqa: F401
 import aiomysql
 from async_db_connection import ConnectionPool, execute_async_query
+from async_db_connection import restart_program
 from db_setup import create_tables, get_checklists_and_criteria
 from gpt_config import analyze_call_with_gpt, save_call_score
 from logging_config import setup_logging, check_and_clear_logs
@@ -314,6 +315,7 @@ async def main():
         raise
     except Exception as e:
         logger.exception(f"Ошибка при выполнении основного цикла: {e}")
+        restart_program()  # Перезапускаем программу при критической ошибке
     finally:
         logger.info("Соединение с базой данных закрыто")
 
@@ -330,5 +332,8 @@ if __name__ == '__main__':
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Получен сигнал прерывания от пользователя (Ctrl+C). Завершение программы.")
+    except Exception as e:
+        logger.critical(f"Необработанная ошибка: {e}. Программа будет перезапущена.")
+        restart_program()  # Перезапуск при ошибке в '__main__'
     finally:
         logger.info("Программа завершена.")

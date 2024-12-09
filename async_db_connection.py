@@ -1,8 +1,10 @@
 #async_db_connection.py
+import asyncio
 import aiomysql
 import logging
 from dotenv import load_dotenv
 import os
+import sys  # Для выхода из программы
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -107,15 +109,21 @@ async def execute_async_query(pool, query, params=None, retries=3):
             # Если соединение пропало, попробуем повторить
             if e.args and e.args[0] in (2013, 2006):
                 logger.info("Повторное подключение...")
+                await asyncio.sleep(2 ** attempt)  # Экспоненциальная задержка
                 continue
-            break
         except Exception as e:
-            logger.exception(f"Неизвестная ошибка при выполнении запроса: {e}")
-            break
+            logger.exception(f"Неизвестная ошибка при выполнении запроса: {e}. Попытка {attempt + 1} из {retries}.")
+            await asyncio.sleep(2 ** attempt)  # Задержка перед повтором
+            continue
         finally:
-            # Если соединение было взято из пула, возвращаем его обратно
+            # Возврат соединения в пул
             if connection:
                 await pool.release_connection(connection)
 
-    logger.error(f"Не удалось выполнить запрос после {retries} попыток.")
-    return None
+    logger.critical(f"Не удалось выполнить запрос после {retries} попыток. Завершение программы.")
+    restart_program()  # Если все попытки исчерпаны, перезапускаем приложение
+
+def restart_program():
+    """Перезапуск программы."""
+    logger.info("Перезапуск программы из-за критической ошибки.")
+    os.execv(sys.executable, ['python'] + sys.argv)
