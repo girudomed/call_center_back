@@ -75,7 +75,7 @@ async def initialize_db_pool():
 async def close_db_pool():
     """Закрытие пула соединений."""
     await pool.close()
-    
+
 #Логируем состояние БДшки
 async def log_db_state():
     """Логирование состояния базы данных."""
@@ -105,6 +105,7 @@ async def log_db_state():
         "Innodb_rows_updated": "SHOW STATUS LIKE 'Innodb_rows_updated';",
         "Innodb_rows_deleted": "SHOW STATUS LIKE 'Innodb_rows_deleted';",
         "Uptime": "SHOW STATUS LIKE 'Uptime';",
+        "PROCESSLIST": "SHOW STATUS LIKE 'PROCESSLIST'"
     }
 
     for metric, query in queries.items():
