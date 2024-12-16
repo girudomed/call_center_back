@@ -47,7 +47,7 @@ lock = asyncio.Lock()
 CONFIG = {
     'LIMIT': 5,
     'RETRIES': 3,
-    'START_DATE': '2024-10-01 00:00:00',
+    'START_DATE': '2024-12-01 00:00:00',
     'BATCH_SIZE': 30,
     'ENABLE_LOGGING': True,
     'DB_HOST': os.getenv('DB_HOST'),
