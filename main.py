@@ -321,8 +321,10 @@ async def main():
 
 def run_flask():
     hypercorn_config = hypercorn.config.Config()
-    hypercorn_config.bind = ["0.0.0.0:5005"]
-    asyncio.run(hypercorn.asyncio.serve(app, hypercorn_config))
+    hypercorn_config.bind = ["0.0.0.0:5005"]  # Настройка привязки порта
+    loop = asyncio.new_event_loop()  # Создаем новый event loop
+    asyncio.set_event_loop(loop)  # Устанавливаем его как текущий loop
+    loop.run_until_complete(hypercorn.asyncio.serve(app, hypercorn_config))
 
 if __name__ == '__main__':
     check_and_clear_logs()
