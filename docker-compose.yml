@@ -1,0 +1,14 @@
+version: "3.8"
+
+services:
+  backend:
+    build: .
+    image: call_center_back
+    container_name: call_center_back_container
+    ports:
+      - "5000:5000"
+    volumes:
+      - .:/app
+    environment:
+      - ENV=production
+    restart: always

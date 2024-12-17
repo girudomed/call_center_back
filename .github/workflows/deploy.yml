@@ -1,4 +1,4 @@
-name: Deploy to Server
+name: CI/CD Pipeline
 
 on:
   push:
@@ -6,25 +6,31 @@ on:
       - main
 
 jobs:
-  deploy:
+  build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v2
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-    - name: Set up SSH
-      uses: webfactory/ssh-agent@v0.5.3
-      with:
-        ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
 
-    - name: Copy backend files via SSH
-      run: scp -r * root@212.113.102.14:/var/www/call_center_back
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v3
+        with:
+          context: .
+          push: true
+          tags: your-dockerhub-user/call_center_back:latest
 
-    - name: Clone and copy frontend repository
-      run: |
-        git clone https://girudomed.kazan%40gmail.com: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@github.com/girudomed/call_center_front.git
-        scp -r call_center_front/* root@212.113.102.14:/var/www/call_center_front
-
-    - name: Execute deployment script
-      run: ssh root@212.113.102.14 'bash -s' < /var/www/call_center_back/deploy.sh
+      - name: Deploy to Server
+        uses: appleboy/ssh-action@v0.1.4
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            docker pull your-dockerhub-user/call_center_back:latest
+            docker stop call_center_container || true
+            docker rm call_center_container || true
+            docker run -d -p 5000:5000 --name call_center_container your-dockerhub-user/call_center_back:latest
