@@ -30,7 +30,15 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           script: |
             cd ~/call_center_back
+            # Проверяем наличие .env файла
+            if [ -f .env ]; then echo ".env файл найден"; else echo "Ошибка: .env не найден!"; exit 1; fi
+            
+            # Остановка старого контейнера
             docker stop call_center_container || true
             docker rm call_center_container || true
+            
+            # Сборка нового образа
             docker build -t call_center_back .
-            docker run -d -p 5000:5000 --name call_center_container call_center_back
+            
+            # Запуск контейнера с .env
+            docker run -d --env-file .env -p 5000:5000 --name call_center_container call_center_back
