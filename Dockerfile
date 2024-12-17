@@ -4,6 +4,10 @@ FROM --platform=linux/amd64 python:3.11.8-slim
 # Устанавливаем рабочую директорию
 WORKDIR /app
 
+# Добавляем переменную окружения для OpenAI
+ENV OPENAI_API_KEY="твой_ключ_от_OpenAI"
+
+
 # Копируем файл зависимостей
 COPY requirements.txt .
 
