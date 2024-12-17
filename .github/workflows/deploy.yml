@@ -1,4 +1,4 @@
-name: CI/CD Pipeline
+name: CI/CD for Call Center Back
 
 on:
   push:
@@ -6,31 +6,31 @@ on:
       - main
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v3
+      - name: Set up SSH and deploy
+        uses: appleboy/scp-action@v0.1.4
         with:
-          context: .
-          push: true
-          tags: your-dockerhub-user/call_center_back:latest
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          source: "."
+          target: "~/call_center_back"
 
-      - name: Deploy to Server
+      - name: Restart Docker container
         uses: appleboy/ssh-action@v0.1.4
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_KEY }}
           script: |
-            docker pull your-dockerhub-user/call_center_back:latest
+            cd ~/call_center_back
             docker stop call_center_container || true
             docker rm call_center_container || true
-            docker run -d -p 5000:5000 --name call_center_container your-dockerhub-user/call_center_back:latest
+            docker build -t call_center_back .
+            docker run -d -p 5000:5000 --name call_center_container call_center_back
