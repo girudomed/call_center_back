@@ -1,23 +1,17 @@
-# Используем amd64-образ Python для совместимости с Ubuntu
-FROM --platform=linux/amd64 python:3.11.8-slim
+# Используем базовый образ Python
+FROM python:3.11.8-slim
 
 # Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Добавляем переменную окружения для OpenAI
-ENV OPENAI_API_KEY="твой_ключ_от_OpenAI"
-
-# Устанавливаем переменные окружения из .env файла
-COPY .env .env
-ENV OPENAI_API_KEY=${OPENAI_API_KEY}
-
-
-# Копируем файл зависимостей
+# Устанавливаем зависимости по частям для снижения нагрузки
 COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip
 
-# Обновляем pip и устанавливаем зависимости
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+# Разделяем requirements.txt на несколько частей
+RUN pip install --no-cache-dir aiohttp aiosignal aiomysql Flask Flask-SQLAlchemy
+RUN pip install --no-cache-dir google-api-python-client openai pandas
+RUN pip install --no-cache-dir scikit-learn spacy tqdm typer
 
 # Копируем исходный код проекта
 COPY . .
@@ -25,5 +19,5 @@ COPY . .
 # Открываем порт для приложения
 EXPOSE 5000
 
-# Команда для запуска приложения
+# Запуск приложения
 CMD ["python", "main.py"]
