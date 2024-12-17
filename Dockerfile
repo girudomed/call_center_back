@@ -7,6 +7,10 @@ WORKDIR /app
 # Добавляем переменную окружения для OpenAI
 ENV OPENAI_API_KEY="твой_ключ_от_OpenAI"
 
+# Устанавливаем переменные окружения из .env файла
+COPY .env .env
+ENV OPENAI_API_KEY=${OPENAI_API_KEY}
+
 
 # Копируем файл зависимостей
 COPY requirements.txt .
