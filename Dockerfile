@@ -1,19 +1,22 @@
 # Используем базовый образ Python
 FROM python:3.11.8-slim
 
+# Устанавливаем системные зависимости (для сборки пакетов)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential && \
+    rm -rf /var/lib/apt/lists/*
+
 # Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Устанавливаем зависимости по частям для снижения нагрузки
+# Копируем только requirements.txt (для кэширования зависимостей)
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip
 
-# Разделяем requirements.txt на несколько частей
-RUN pip install --no-cache-dir aiohttp aiosignal aiomysql Flask Flask-SQLAlchemy
-RUN pip install --no-cache-dir google-api-python-client openai pandas
-RUN pip install --no-cache-dir scikit-learn spacy tqdm typer
+# Устанавливаем Python-зависимости с использованием кэша
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
-# Копируем исходный код проекта
+# Копируем весь исходный код проекта
 COPY . .
 
 # Открываем порт для приложения

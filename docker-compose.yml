@@ -2,10 +2,14 @@ version: "3.8"
 
 services:
   app:
-    build: .
-    container_name: call_center_back_container
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: call_center_container
     ports:
       - "5000:5000"
+    volumes:
+      - .:/app  # Для разработки: монтируем код напрямую
     env_file:
       - .env
     restart: always
