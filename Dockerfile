@@ -22,16 +22,14 @@ RUN pip install --no-cache-dir scikit-learn spacy tqdm typer
 RUN pip install --no-cache-dir rich weasel langcodes thinc cryptography
 RUN pip install --no-cache-dir python-dotenv APScheduler
 
-# Копируем исходный код проекта
+# Копируем весь проект
 COPY . .
 
 # Добавляем переменные окружения
-ENV PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+ENV PYTHONUNBUFFERED=1
 
-# Убедимся, что dotenv будет использовать файл .env
-CMD ["sh", "-c", "python -m dotenv.main -- python main.py"]
-
-# Открываем порт для приложения
+# Открываем порт
 EXPOSE 5000
+
+# Запускаем приложение
+CMD ["python", "main.py"]
