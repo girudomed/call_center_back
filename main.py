@@ -22,6 +22,9 @@ from logging.handlers import RotatingFileHandler
 import hypercorn.asyncio
 import hypercorn.config
 from app import setup_routes
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Настройка логирования с ротацией
 db_logger = logging.getLogger('db_logger')
