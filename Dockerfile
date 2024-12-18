@@ -16,11 +16,7 @@ COPY requirements.txt ./requirements.txt
 
 # Разделяем зависимости на этапы для максимального кэширования
 RUN pip install --no-cache-dir --upgrade pip
-RUN pip install --no-cache-dir aiohttp aiosignal aiomysql Flask Flask-SQLAlchemy
-RUN pip install --no-cache-dir google-api-python-client openai pandas
-RUN pip install --no-cache-dir scikit-learn spacy tqdm typer
-RUN pip install --no-cache-dir rich weasel langcodes thinc cryptography
-RUN pip install --no-cache-dir python-dotenv APScheduler
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Копируем весь проект
 COPY . .

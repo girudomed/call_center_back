@@ -14,15 +14,6 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Set up SSH and deploy
-        uses: appleboy/scp-action@v0.1.4
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SSH_KEY }}
-          source: "."
-          target: "~/call_center_back"
-
-      - name: Restart Docker container
         uses: appleboy/ssh-action@v0.1.4
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -30,28 +21,33 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           script: |
             cd ~/call_center_back
-            
-            # Обновляем репозиторий
+
+            echo "Обновляем репозиторий..."
+            git reset --hard HEAD
             git pull origin main
 
-            # Проверяем изменения в requirements.txt
+            echo "Проверяем изменения в requirements.txt..."
             if git diff --name-only HEAD HEAD~1 | grep -q 'requirements.txt'; then
               echo "requirements.txt изменён. Пересобираем контейнер."
               
-              # Остановка старого контейнера
+              echo "Удаляем старый контейнер и образ..."
               docker stop call_center_container || true
               docker rm call_center_container || true
+              docker rmi call_center_back || true
 
-              # Сборка нового образа
-              docker build -t call_center_back .
+              echo "Собираем новый Docker-образ без кэша..."
+              docker build --no-cache -t call_center_back .
 
-              # Запуск контейнера с .env
-              docker run -d --env-file .env -p 5000:5000 --name call_center_container call_center_back
+              echo "Запускаем новый контейнер..."
+              docker run -d --env-file .env --restart always -p 5000:5000 --name call_center_container call_center_back
             else
-              echo "Только код изменён. Перезапуск контейнера."
+              echo "Только код изменён. Перезапускаем контейнер."
               
-              # Перезапуск контейнера без пересборки
               docker stop call_center_container || true
               docker rm call_center_container || true
-              docker run -d --env-file .env -p 5000:5000 --name call_center_container call_center_back
+              docker run -d --env-file .env --restart always -p 5000:5000 --name call_center_container call_center_back
             fi
+
+            echo "Очистка старых Docker-ресурсов..."
+            docker image prune -af || true
+            docker container prune -f || true
