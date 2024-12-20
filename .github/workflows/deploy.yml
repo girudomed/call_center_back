@@ -20,22 +20,27 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_KEY }}
           script: |
-            # Проверяем наличие директории проекта
+            echo "=== Проверяем наличие проекта на сервере ==="
             if [ ! -d ~/call_center_back ]; then
-              echo "Репозиторий не найден, клонируем заново..."
+              echo "Репозиторий не найден. Клонируем заново..."
               git clone https://github.com/girudomed/call_center_back.git ~/call_center_back
             fi
 
             cd ~/call_center_back
 
-            echo "Обновляем репозиторий..."
+            echo "=== Обновляем репозиторий ==="
             git fetch origin
             git reset --hard origin/main
 
-            echo "Перезапускаем контейнеры через docker-compose..."
+            echo "=== Текущая версия кода ==="
+            git rev-parse HEAD
+
+            echo "=== Перезапускаем контейнеры через docker-compose ==="
             docker-compose down
             docker-compose up --build -d
 
-            echo "Очистка старых Docker-ресурсов..."
+            echo "=== Очистка старых Docker-ресурсов ==="
             docker image prune -af || true
             docker container prune -f || true
+
+            echo "=== Деплой завершён успешно ==="
