@@ -14,9 +14,9 @@ WORKDIR /app
 # Копируем и устанавливаем системные зависимости поэтапно для кэширования
 COPY requirements.txt ./requirements.txt
 
-# Разделяем зависимости на этапы для максимального кэширования
-RUN pip install --no-cache-dir --upgrade pip
-RUN pip install --no-cache-dir -r requirements.txt
+# Устанавливаем зависимости с использованием кэша
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Копируем весь проект
 COPY . .

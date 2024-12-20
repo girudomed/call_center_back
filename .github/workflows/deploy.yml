@@ -32,27 +32,9 @@ jobs:
             git fetch origin
             git reset --hard origin/main
 
-            echo "Проверяем изменения в requirements.txt..."
-            if git diff --name-only HEAD HEAD~1 | grep -q 'requirements.txt'; then
-              echo "requirements.txt изменён. Пересобираем контейнер."
-              
-              echo "Удаляем старый контейнер и образ..."
-              docker stop call_center_container || true
-              docker rm call_center_container || true
-              docker rmi call_center_back || true
-
-              echo "Собираем новый Docker-образ без кэша..."
-              docker build --no-cache -t call_center_back .
-
-              echo "Запускаем новый контейнер..."
-              docker run -d --env-file .env --restart always -p 5000:5000 --name call_center_container call_center_back
-            else
-              echo "Только код изменён. Перезапускаем контейнер."
-              
-              docker stop call_center_container || true
-              docker rm call_center_container || true
-              docker run -d --env-file .env --restart always -p 5000:5000 --name call_center_container call_center_back
-            fi
+            echo "Перезапускаем контейнеры через docker-compose..."
+            docker-compose down
+            docker-compose up --build -d
 
             echo "Очистка старых Docker-ресурсов..."
             docker image prune -af || true
