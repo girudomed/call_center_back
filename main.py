@@ -277,6 +277,9 @@ async def main():
         # Передаём app и pool в setup_routes
         setup_routes(app, pool)
 
+        last_processed_timestamp = START_DATE_TIMESTAMP  # Последняя обработанная дата
+
+
         call_history_ids = await get_history_ids_from_call_history(pool)
         if call_history_ids is None:
             logger.error("Не удалось получить идентификаторы истории звонков")
@@ -301,24 +304,34 @@ async def main():
             SELECT history_id, called_info, caller_info, talk_duration, transcript, context_start_time
             FROM call_history 
             WHERE context_start_time >= %s
-            ORDER BY history_id DESC
+            ORDER BY history_id ASC
             LIMIT %s OFFSET %s
             """
-            call_data = await execute_async_query(pool, query, (START_DATE_TIMESTAMP, CONFIG['LIMIT'], offset))
+            call_data = await execute_async_query(pool, query, (last_processed_timestamp, CONFIG['LIMIT'], offset))
             if not call_data:
                 logger.info("Новых звонков нет, ожидаю...")
-                await asyncio.sleep(10)  # Ждем перед повторной проверкой
+                await asyncio.sleep(30)  # Ждем перед повторной проверкой
+                offset = 0
                 continue
 
             await process_calls(call_data, pool, checklists, lock)
+
+            # Обновляем последнюю обработанную дату
+            last_processed_timestamp = max(
+                last_processed_timestamp,
+                max(call["context_start_time"] for call in call_data)
+            )
+
             offset += CONFIG['LIMIT']
             await asyncio.sleep(0.1)
     except asyncio.CancelledError:
         logger.info("Основная задача отменена.")
         raise
+
     except Exception as e:
-        logger.exception(f"Ошибка при выполнении основного цикла: {e}")
-        restart_program()  # Перезапускаем программу при критической ошибке
+        logger.exception(f"Критическая ошибка: {e}")
+        restart_program()
+
     finally:
         logger.info("Соединение с базой данных закрыто")
 
