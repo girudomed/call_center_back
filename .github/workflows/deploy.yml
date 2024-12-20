@@ -32,11 +32,12 @@ jobs:
             git fetch origin
             git reset --hard origin/main
 
-            echo "=== Текущая версия кода ==="
-            git rev-parse HEAD
+            echo "=== Принудительно удаляем существующий контейнер ==="
+            docker stop call_center_container || true
+            docker rm call_center_container || true
 
             echo "=== Перезапускаем контейнеры через docker-compose ==="
-            docker-compose down
+            docker-compose down || true
             docker-compose up --build -d
 
             echo "=== Очистка старых Docker-ресурсов ==="
