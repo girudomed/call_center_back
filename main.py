@@ -196,6 +196,7 @@ async def analyze_and_save_call(pool, transcript, checklists, call_id, call_date
 
             log_analysis_result(call_id, result)
             break  # Успешное завершение, выходим из цикла
+
         except openai.RateLimitError as e:
             logger.warning(f"Превышен лимит запросов для звонка {call_id}: {e}")
             if attempt < CONFIG['RETRIES'] - 1:
@@ -277,7 +278,10 @@ async def main():
         # Передаём app и pool в setup_routes
         setup_routes(app, pool)
 
+        # Инициализируем переменные для отслеживания последней обработанной записи.
+        # Используем композитный ключ: (context_start_time, history_id)
         last_processed_timestamp = START_DATE_TIMESTAMP  # Последняя обработанная дата
+        last_processed_history_id = 0  # Изначально нет обработанного history_id
 
 
         call_history_ids = await get_history_ids_from_call_history(pool)
@@ -298,40 +302,36 @@ async def main():
         if missing_ids:
             await process_missing_calls(missing_ids, pool, checklists, lock)
 
-        offset = 0
+        # Основной цикл обработки новых звонков
         while True:
+            # Запрос изменен: вместо offset используется фильтрация по композитному ключу (context_start_time, history_id)
             query = """
             SELECT history_id, called_info, caller_info, talk_duration, transcript, context_start_time
             FROM call_history 
-            WHERE context_start_time >= %s
-            ORDER BY history_id ASC
-            LIMIT %s OFFSET %s
+            WHERE (context_start_time, history_id) > (%s, %s)
+            ORDER BY context_start_time ASC, history_id ASC
+            LIMIT %s
             """
-            call_data = await execute_async_query(pool, query, (last_processed_timestamp, CONFIG['LIMIT'], offset))
+            call_data = await execute_async_query(pool, query, (last_processed_timestamp, last_processed_history_id, CONFIG['LIMIT']))
             if not call_data:
                 logger.info("Новых звонков нет, ожидаю...")
-                await asyncio.sleep(30)  # Ждем перед повторной проверкой
-                offset = 0
+                await asyncio.sleep(10800)  # Ждем перед повторной проверкой
                 continue
 
             await process_calls(call_data, pool, checklists, lock)
 
             # Обновляем последнюю обработанную дату
-            last_processed_timestamp = max(
-                last_processed_timestamp,
-                max(call["context_start_time"] for call in call_data)
-            )
+            last_call = call_data[-1]
+            last_processed_timestamp = last_call["context_start_time"]
+            last_processed_history_id = last_call["history_id"]
 
-            offset += CONFIG['LIMIT']
             await asyncio.sleep(0.1)
     except asyncio.CancelledError:
         logger.info("Основная задача отменена.")
         raise
-
     except Exception as e:
         logger.exception(f"Критическая ошибка: {e}")
         restart_program()
-
     finally:
         logger.info("Соединение с базой данных закрыто")
 
