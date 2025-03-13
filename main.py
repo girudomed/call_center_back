@@ -144,22 +144,22 @@ def timestamp_to_datetime(timestamp):
 async def process_calls(calls, pool, checklists, lock):
     async with lock:
         """Обработка списка звонков."""
-    tasks = []
-    for call in calls:
-        call_id = call['history_id']
-        called_info = call['called_info']
-        caller_info = call['caller_info']
-        talk_duration = str(call['talk_duration'])
-        transcript = call['transcript']
-        context_start_time = call['context_start_time']
-        call_date = timestamp_to_datetime(context_start_time).strftime('%Y-%m-%d %H:%M:%S') if context_start_time else None
-        if transcript:
-            tasks.append(analyze_and_save_call(
-                pool, transcript, checklists, call_id, call_date, called_info, caller_info, talk_duration, lock))
-    try:
-        await asyncio.gather(*tasks)
-    except Exception as e:
-        logger.exception(f"Ошибка при обработке звонков: {e}")
+        tasks = []
+        for call in calls:
+            call_id = call['history_id']
+            called_info = call['called_info']
+            caller_info = call['caller_info']
+            talk_duration = str(call['talk_duration'])
+            transcript = call['transcript']
+            context_start_time = call['context_start_time']
+            call_date = timestamp_to_datetime(context_start_time).strftime('%Y-%m-%d %H:%M:%S') if context_start_time else None
+            if transcript:
+                tasks.append(analyze_and_save_call(
+                    pool, transcript, checklists, call_id, call_date, called_info, caller_info, talk_duration, lock))
+        try:
+            await asyncio.gather(*tasks)
+        except Exception as e:
+            logger.exception(f"Ошибка при обработке звонков: {e}")
 
 async def analyze_and_save_call(pool, transcript, checklists, call_id, call_date, called_info, caller_info, talk_duration, lock):
     """Анализ и сохранение результатов звонка."""
@@ -278,11 +278,23 @@ async def main():
         # Передаём app и pool в setup_routes
         setup_routes(app, pool)
 
-        # Инициализируем переменные для отслеживания последней обработанной записи.
-        # Используем композитный ключ: (context_start_time, history_id)
-        last_processed_timestamp = START_DATE_TIMESTAMP  # Последняя обработанная дата
-        last_processed_history_id = 0  # Изначально нет обработанного history_id
+        # Чтение последнего состояния из БД при старте
+        state_query = "SELECT last_processed_timestamp, last_processed_history_id FROM processing_state WHERE id = 1"
+        state_result = await execute_async_query(pool, state_query)
 
+        # Загружаем последнее состояние из базы данных
+        state_result = await execute_async_query(pool, "SELECT last_processed_timestamp, last_processed_history_id FROM processing_state WHERE id = 1")
+
+        if state_result and state_result[0]['last_processed_timestamp']:
+            last_processed_timestamp = state_result[0]['last_processed_timestamp']
+            last_processed_history_id = state_result[0]['last_processed_history_id']
+            logger.info(f"Загружено состояние из базы: timestamp={last_processed_timestamp}, history_id={last_processed_history_id}")
+        else:
+            # Инициализируем переменные для отслеживания последней обработанной записи.
+            # Используем композитный ключ: (context_start_time, history_id)
+            last_processed_timestamp = START_DATE_TIMESTAMP  # Последняя обработанная дата
+            last_processed_history_id = 0  # Изначально нет обработанного history_id
+            logger.info("Используются начальные значения состояния")
 
         call_history_ids = await get_history_ids_from_call_history(pool)
         if call_history_ids is None:
@@ -325,6 +337,12 @@ async def main():
             last_processed_timestamp = last_call["context_start_time"]
             last_processed_history_id = last_call["history_id"]
 
+            # ⬇️ ВАЖНО: сохранение состояния после успешной обработки пакета звонков
+            await execute_async_query(pool,
+                "REPLACE INTO processing_state (id, last_processed_timestamp, last_processed_history_id) VALUES (1, %s, %s)",
+                (last_processed_timestamp, last_processed_history_id)
+            )
+
             await asyncio.sleep(0.1)
     except asyncio.CancelledError:
         logger.info("Основная задача отменена.")
@@ -333,6 +351,7 @@ async def main():
         logger.exception(f"Критическая ошибка: {e}")
         restart_program()
     finally:
+        await close_db_pool()  # <— ВАЖНО! Теперь пул соединений будет закрыт корректно
         logger.info("Соединение с базой данных закрыто")
 
 def run_flask():
