@@ -282,7 +282,6 @@ async def main():
         state_query = "SELECT last_processed_timestamp, last_processed_history_id FROM processing_state WHERE id = 1"
         state_result = await execute_async_query(pool, state_query)
 
-
         if state_result and state_result[0]['last_processed_timestamp']:
             last_processed_timestamp = state_result[0]['last_processed_timestamp']
             last_processed_history_id = state_result[0]['last_processed_history_id']
@@ -290,9 +289,16 @@ async def main():
         else:
             # Инициализируем переменные для отслеживания последней обработанной записи.
             # Используем композитный ключ: (context_start_time, history_id)
-            last_processed_timestamp = START_DATE_TIMESTAMP  # Последняя обработанная дата
-            last_processed_history_id = 0  # Изначально нет обработанного history_id
+            last_processed_timestamp = START_DATE_TIMESTAMP
+            last_processed_history_id = 0
             logger.info("Используются начальные значения состояния")
+
+        # ⬇️ ВАЖНО: Сразу сохраняем инициализированное состояние, даже если звонков пока нет
+        await execute_async_query(pool,
+            "REPLACE INTO processing_state (id, last_processed_timestamp, last_processed_history_id) VALUES (1, %s, %s)",
+            (last_processed_timestamp, last_processed_history_id)
+        )
+        logger.info("Инициализированное состояние сохранено в таблицу processing_state")
 
         call_history_ids = await get_history_ids_from_call_history(pool)
         if call_history_ids is None:
@@ -314,34 +320,38 @@ async def main():
 
         # Основной цикл обработки новых звонков
         while True:
-            # Запрос изменен: вместо offset используется фильтрация по композитному ключу (context_start_time, history_id)
-            query = """
-            SELECT history_id, called_info, caller_info, talk_duration, transcript, context_start_time
-            FROM call_history 
-            WHERE (context_start_time, history_id) > (%s, %s)
-            ORDER BY context_start_time ASC, history_id ASC
-            LIMIT %s
-            """
-            call_data = await execute_async_query(pool, query, (last_processed_timestamp, last_processed_history_id, CONFIG['LIMIT']))
-            if call_data:
-                await process_calls(call_data, pool, checklists, lock)
-                # Обновляем последнюю обработанную дату
-                last_call = call_data[-1]
-                last_processed_timestamp = last_call["context_start_time"]
-                last_processed_history_id = last_call["history_id"]
-                
-                logger.info(f"Состояние обновлено до timestamp={last_processed_timestamp}, history_id={last_processed_history_id}")
+            try:
+                # Запрос изменен: вместо offset используется фильтрация по композитному ключу (context_start_time, history_id)
+                query = """
+                SELECT history_id, called_info, caller_info, talk_duration, transcript, context_start_time
+                FROM call_history 
+                WHERE (context_start_time, history_id) > (%s, %s)
+                ORDER BY context_start_time ASC, history_id ASC
+                LIMIT %s
+                """
+                call_data = await execute_async_query(pool, query, (last_processed_timestamp, last_processed_history_id, CONFIG['LIMIT']))
+                if call_data:
+                    await process_calls(call_data, pool, checklists, lock)
+                    # Обновляем последнюю обработанную дату
+                    last_call = call_data[-1]
+                    last_processed_timestamp = last_call["context_start_time"]
+                    last_processed_history_id = last_call["history_id"]
+                    logger.info(f"Состояние обновлено до timestamp={last_processed_timestamp}, history_id={last_processed_history_id}")
+                else:
+                    logger.info("Новых звонков нет, ожидаю...")
+
+                # ⬇️ ВСЕГДА СОХРАНЯЙ СОСТОЯНИЕ В БАЗУ ДАННЫХ
+                await execute_async_query(pool,
+                    "REPLACE INTO processing_state (id, last_processed_timestamp, last_processed_history_id) VALUES (1, %s, %s)",
+                    (last_processed_timestamp, last_processed_history_id)
+                )
+
+            except Exception as e:
+                logger.exception("Ошибка внутри цикла обработки звонков, ожидаю следующей попытки через 3 часа.", exc_info=e)
+                await asyncio.sleep(60)  # Пауза перед повторной попыткой в случае ошибки
             else:
-                logger.info("Новых звонков нет, ожидаю...")
-
-            # ⬇️ ВСЕГДА СОХРАНЯЙ СОСТОЯНИЕ В БАЗУ ДАННЫХ
-            await execute_async_query(pool,
-                "REPLACE INTO processing_state (id, last_processed_timestamp, last_processed_history_id) VALUES (1, %s, %s)",
-                (last_processed_timestamp, last_processed_history_id)
-            )
-
-            await asyncio.sleep(10800)  # Ожидание следующей проверки
-
+                # Если не было ошибок, ожидаем следующей проверки
+                await asyncio.sleep(10800)
     except asyncio.CancelledError:
         logger.info("Основная задача отменена.")
         raise
