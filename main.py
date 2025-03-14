@@ -317,7 +317,7 @@ async def process_missing_calls(missing_ids, pool, checklists, lock):
 async def main():
     logger.info("Начало выполнения скрипта")
     try:
-        pool = await initialize_db_pool()
+        await initialize_db_pool()
         if pool is None:
             raise RuntimeError("Не удалось инициализировать пул соединений")
         logger.info("Пул соединений MySQL успешно инициализирован.")
