@@ -282,8 +282,6 @@ async def main():
         state_query = "SELECT last_processed_timestamp, last_processed_history_id FROM processing_state WHERE id = 1"
         state_result = await execute_async_query(pool, state_query)
 
-        # Загружаем последнее состояние из базы данных
-        state_result = await execute_async_query(pool, "SELECT last_processed_timestamp, last_processed_history_id FROM processing_state WHERE id = 1")
 
         if state_result and state_result[0]['last_processed_timestamp']:
             last_processed_timestamp = state_result[0]['last_processed_timestamp']
@@ -325,25 +323,25 @@ async def main():
             LIMIT %s
             """
             call_data = await execute_async_query(pool, query, (last_processed_timestamp, last_processed_history_id, CONFIG['LIMIT']))
-            if not call_data:
+            if call_data:
+                await process_calls(call_data, pool, checklists, lock)
+                # Обновляем последнюю обработанную дату
+                last_call = call_data[-1]
+                last_processed_timestamp = last_call["context_start_time"]
+                last_processed_history_id = last_call["history_id"]
+                
+                logger.info(f"Состояние обновлено до timestamp={last_processed_timestamp}, history_id={last_processed_history_id}")
+            else:
                 logger.info("Новых звонков нет, ожидаю...")
-                await asyncio.sleep(10800)  # Ждем перед повторной проверкой
-                continue
 
-            await process_calls(call_data, pool, checklists, lock)
-
-            # Обновляем последнюю обработанную дату
-            last_call = call_data[-1]
-            last_processed_timestamp = last_call["context_start_time"]
-            last_processed_history_id = last_call["history_id"]
-
-            # ⬇️ ВАЖНО: сохранение состояния после успешной обработки пакета звонков
+            # ⬇️ ВСЕГДА СОХРАНЯЙ СОСТОЯНИЕ В БАЗУ ДАННЫХ
             await execute_async_query(pool,
                 "REPLACE INTO processing_state (id, last_processed_timestamp, last_processed_history_id) VALUES (1, %s, %s)",
                 (last_processed_timestamp, last_processed_history_id)
             )
 
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(10800)  # Ожидание следующей проверки
+
     except asyncio.CancelledError:
         logger.info("Основная задача отменена.")
         raise
