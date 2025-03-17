@@ -355,9 +355,16 @@ async def main():
             logger.info(f"Загружено состояние из базы: timestamp={last_processed_timestamp}, history_id={last_processed_history_id}")
         else:
             last_processed_timestamp = START_DATE_TIMESTAMP
-            last_processed_history_id = 0
-            logger.info("Используются начальные значения состояния")
-        # Получаем идентификаторы звонков
+            # Определяем автоматически последний обработанный history_id из call_scores,
+            # так как обработанные звонки с транскриптом заносятся в таблицу call_scores.
+            query = "SELECT MAX(history_id) AS max_id FROM call_scores WHERE call_date >= %s"
+            result = await execute_async_query(pool, query, (CONFIG['START_DATE'],))
+            if result and result[0].get('max_id') is not None:
+                last_processed_history_id = result[0]['max_id']
+            else:
+                last_processed_history_id = 0
+            logger.info(f"Используются начальные значения состояния: timestamp={last_processed_timestamp}, history_id={last_processed_history_id}")
+                # Получаем идентификаторы звонков из таблиц call_history и call_scores
         call_history_ids = await get_history_ids_from_call_history(pool)
         if call_history_ids is None:
             logger.error("Не удалось получить идентификаторы истории звонков")
