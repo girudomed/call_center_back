@@ -232,85 +232,94 @@ async def get_call_data_by_history_ids(pool, history_ids):
     return await execute_async_query(pool, query, tuple(history_ids) + (START_DATE_TIMESTAMP,))
 
 async def process_missing_calls(missing_ids, pool, checklists, lock):
+    MAX_RETRIES = 5
+    failed_ids = {}  # Словарь для хранения неудачных попыток
     """Обработка недостающих звонков."""
     while missing_ids:
+        # Извлекаем батч идентификаторов
         batch_ids = missing_ids[:CONFIG['BATCH_SIZE']]
         missing_ids = missing_ids[CONFIG['BATCH_SIZE']:]
+        
+        # Обрабатываем каждый идентификатор из батча отдельно с учетом счетчика попыток
+        for call_id in batch_ids:
+            failed_ids.setdefault(call_id, 0)
+            if failed_ids[call_id] >= MAX_RETRIES:
+                logger.error(f"Звонок {call_id} пропущен после {MAX_RETRIES} попыток")
+                continue
 
-        # Получаем данные о звонках
-        call_data = await get_call_data_by_history_ids(pool, batch_ids)
-        if call_data is None:
-            logger.error(f"Не удалось получить данные о звонках для history_ids: {batch_ids}")
-            continue
-        
-        # Проверяем, что call_data — список
-        if not isinstance(call_data, list):
-            logger.error(f"Некорректный тип call_data: {type(call_data)}, ожидался list")
-            continue
-        
-        # Проверяем, что данные не пустые
-        if not call_data:
-            logger.info(f"Для history_ids {batch_ids} не найдено данных")
-            continue
-        
-        tasks = []
-        for call in call_data:
-            call_id = None  # Инициализируем call_id заранее
             try:
-                # Проверяем обязательное поле history_id
-                call_id = call.get('history_id')
-                if call_id is None:
-                    logger.error(f"Пропущен звонок без history_id: {call}")
+                # Получаем данные для одного звонка (ожидается список)
+                call_data = await get_call_data_by_history_ids(pool, [call_id])
+                if call_data is None:
+                    logger.error(f"Не удалось получить данные о звонке для history_id: {call_id}")
+                    failed_ids[call_id] += 1
                     continue
-                
-                logger.info(f"Начинаю обработку звонка ID: {call_id}")
+                if not isinstance(call_data, list):
+                    logger.error(f"Некорректный тип call_data: {type(call_data)}, ожидался list")
+                    failed_ids[call_id] += 1
+                    continue
+                if not call_data:
+                    logger.info(f"Для history_id {call_id} не найдено данных")
+                    continue
 
-                # Привязываем все элементы с безопасными значениями
-                called_info = call.get('called_info', 'Неизвестно')
-                caller_info = call.get('caller_info', 'Неизвестно')
-                talk_duration = call.get('talk_duration', 0)
-                if talk_duration is None:
-                    talk_duration = 0
-                talk_duration = str(talk_duration)  # Преобразуем в строку
-                transcript = call.get('transcript')
-                context_start_time = call.get('context_start_time')
-                
-                # Обрабатываем дату с защитой от ошибок
-                try:
-                    call_date = (
-                        timestamp_to_datetime(context_start_time).strftime('%Y-%m-%d %H:%M:%S')
-                        if context_start_time
-                        else None
-                    )
-                except Exception as e:
-                    logger.error(f"Ошибка преобразования context_start_time для звонка ID {call_id}: {e}")
-                    call_date = None
-                
-                # Если есть transcript, добавляем задачу
-                if transcript:
-                    tasks.append(analyze_and_save_call(
-                        pool, transcript, checklists, call_id, call_date, called_info, caller_info, talk_duration, lock
-                    ))
+                tasks = []
+                for call in call_data:
+                    # Безопасное получение идентификатора звонка
+                    call_id_inner = call.get('history_id', None)
+                    if call_id_inner is None:
+                        logger.error(f"Пропущен звонок без history_id: {call}")
+                        continue
+
+                    logger.info(f"Начинаю обработку звонка ID: {call_id_inner}")
+
+                    # Извлекаем остальные данные с значениями по умолчанию
+                    called_info = call.get('called_info', 'Неизвестно')
+                    caller_info = call.get('caller_info', 'Неизвестно')
+                    talk_duration = call.get('talk_duration', 0)
+                    if talk_duration is None:
+                        talk_duration = 0
+                    talk_duration = str(talk_duration)
+                    transcript = call.get('transcript')
+                    context_start_time = call.get('context_start_time')
+
+                    # Обработка даты с проверкой типа
+                    try:
+                        if isinstance(context_start_time, (int, float)):
+                            call_date = timestamp_to_datetime(context_start_time).strftime('%Y-%m-%d %H:%M:%S')
+                        else:
+                            call_date = None
+                    except Exception as e:
+                        logger.error(f"Ошибка преобразования context_start_time для звонка ID {call_id_inner}: {e}")
+                        call_date = None
+
+                    # Если transcript присутствует, добавляем задачу анализа и сохранения
+                    if transcript:
+                        tasks.append(analyze_and_save_call(
+                            pool, transcript, checklists, call_id_inner, call_date,
+                            called_info, caller_info, talk_duration, lock
+                        ))
+                    else:
+                        logger.warning(f"Звонок ID {call_id_inner} пропущен: нет transcript")
+
+                # Если задачи сформированы, выполняем их асинхронно
+                if tasks:
+                    try:
+                        results = await asyncio.gather(*tasks, return_exceptions=True)
+                        for result in results:
+                            if isinstance(result, Exception):
+                                logger.error(f"Ошибка в задаче: {result}")
+                        logger.info(f"Успешно обработана партия из {len(tasks)} звонков для history_id {call_id}")
+                    except Exception as e:
+                        logger.exception(f"Критическая ошибка при обработке партии звонков для history_id {call_id}: {e}")
                 else:
-                    logger.warning(f"Звонок ID {call_id} пропущен: нет transcript")
+                    logger.info(f"Партия пустая, нет звонков с transcript для history_id {call_id}")
 
-            except KeyError as e:
-                logger.error(f"Ошибка в данных звонка ID {call_id if call_id is not None else 'неизвестен'}: отсутствует поле {e}")            
+                # При успешной обработке удаляем запись из failed_ids
+                if call_id in failed_ids:
+                    del failed_ids[call_id]
             except Exception as e:
-                logger.exception(f"Неожиданная ошибка при обработке звонка ID {call_id if call_id is not None else 'неизвестен'}: {e}")        
-        # Обрабатываем задачи, если они есть
-        if tasks:
-            try:
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-                # Проверяем результаты на ошибки
-                for result in results:
-                    if isinstance(result, Exception):
-                        logger.error(f"Ошибка в задаче: {result}")
-                logger.info(f"Успешно обработана партия из {len(tasks)} звонков")
-            except Exception as e:
-                logger.exception(f"Критическая ошибка при обработке партии звонков: {e}")
-        else:
-            logger.info("Партия пустая, нет звонков с transcript")
+                failed_ids[call_id] += 1
+                logger.exception(f"Ошибка при обработке звонка {call_id}: {e}")
 
         logger.info(f"Осталось выгрузить {len(missing_ids)} записей для анализа")
 
