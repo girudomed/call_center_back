@@ -324,6 +324,7 @@ async def process_missing_calls(missing_ids, pool, checklists, lock):
         logger.info(f"Осталось выгрузить {len(missing_ids)} записей для анализа")
 
 async def main():
+    global pool  # Если предполагается изменение глобальной переменной
     logger.info("Начало выполнения скрипта")
     try:
         await initialize_db_pool()
@@ -331,13 +332,15 @@ async def main():
             raise RuntimeError("Не удалось инициализировать пул соединений")
         logger.info("Пул соединений MySQL успешно инициализирован.")
 
-        asyncio.create_task(schedule_db_state_logging(logging_interval=200))
+        asyncio.create_task(schedule_db_state_logging(logging_interval=10800))
 
         # Вызываем create_tables и get_checklists_and_criteria без получения connection
         # так как они будут использовать execute_async_query(pool, ...) внутри
         await create_tables(pool)
         checklists = await get_checklists_and_criteria(pool)
         if not checklists:
+            logger.warning("Чек-листы не загружены или пусты, продолжаем работу с пустым набором чек-листов")
+            checklists = []
             raise ValueError("Чек-листы не загружены или пусты")
         logger.info(f"Получены чек-листы: {checklists}")
         # Передаём app и pool в setup_routes
@@ -346,18 +349,15 @@ async def main():
         # Чтение последнего состояния из БД при старте
         state_query = "SELECT last_processed_timestamp, last_processed_history_id FROM processing_state WHERE id = 1"
         state_result = await execute_async_query(pool, state_query)
-
         if state_result and state_result[0]['last_processed_timestamp'] is not None:
-            last_processed_timestamp = state_result[0]['last_processed_timestamp']
-            last_processed_history_id = state_result[0]['last_processed_history_id']
+            last_processed_timestamp = state_result[0].get('last_processed_timestamp')
+            last_processed_history_id = state_result[0].get('last_processed_history_id')
             logger.info(f"Загружено состояние из базы: timestamp={last_processed_timestamp}, history_id={last_processed_history_id}")
         else:
-            # Инициализируем переменные для отслеживания последней обработанной записи.
-            # Используем композитный ключ: (context_start_time, history_id)
             last_processed_timestamp = START_DATE_TIMESTAMP
             last_processed_history_id = 0
             logger.info("Используются начальные значения состояния")
-
+        # Получаем идентификаторы звонков
         call_history_ids = await get_history_ids_from_call_history(pool)
         if call_history_ids is None:
             logger.error("Не удалось получить идентификаторы истории звонков")
@@ -368,8 +368,8 @@ async def main():
             logger.error("Не удалось получить идентификаторы оценок звонков")
             return
 
-        call_history_ids_set = set(row['history_id'] for row in call_history_ids)
-        call_scores_ids_set = set(row['history_id'] for row in call_scores_ids)
+        call_history_ids_set = set(row['history_id'] for row in call_history_ids if row.get('history_id') is not None)
+        call_scores_ids_set = set(row['history_id'] for row in call_scores_ids if row.get('history_id') is not None)
         missing_ids = list(call_history_ids_set - call_scores_ids_set)
         logger.info(f"Отсутствующие ID: {missing_ids}")
 
@@ -383,7 +383,9 @@ async def main():
                 query = """
                 SELECT history_id, called_info, caller_info, talk_duration, transcript, context_start_time
                 FROM call_history 
-                WHERE (context_start_time, history_id) > (%s, %s)
+                WHERE context_start_time IS NOT NULL
+                AND history_id IS NOT NULL 
+                AND (context_start_time, history_id) > (%s, %s)
                 ORDER BY context_start_time ASC, history_id ASC
                 LIMIT %s
                 """
