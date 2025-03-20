@@ -232,9 +232,8 @@ async def get_call_data_by_history_ids(pool, history_ids):
     return await execute_async_query(pool, query, tuple(history_ids) + (START_DATE_TIMESTAMP,))
 
 async def process_missing_calls(missing_ids, pool, checklists, lock):
-    MAX_RETRIES = 5
-    failed_ids = {}  # Словарь для хранения неудачных попыток
     """Обработка недостающих звонков."""
+    failed_ids = {}
     while missing_ids:
         # Извлекаем батч идентификаторов
         batch_ids = missing_ids[:CONFIG['BATCH_SIZE']]
@@ -243,10 +242,6 @@ async def process_missing_calls(missing_ids, pool, checklists, lock):
         # Обрабатываем каждый идентификатор из батча отдельно с учетом счетчика попыток
         for call_id in batch_ids:
             failed_ids.setdefault(call_id, 0)
-            if failed_ids[call_id] >= MAX_RETRIES:
-                logger.error(f"Звонок {call_id} пропущен после {MAX_RETRIES} попыток")
-                continue
-
             try:
                 # Получаем данные для одного звонка (ожидается список)
                 call_data = await get_call_data_by_history_ids(pool, [call_id])
@@ -265,7 +260,7 @@ async def process_missing_calls(missing_ids, pool, checklists, lock):
                 tasks = []
                 for call in call_data:
                     # Безопасное получение идентификатора звонка
-                    call_id_inner = call.get('history_id', None)
+                    call_id_inner = call.get('history_id')
                     if call_id_inner is None:
                         logger.error(f"Пропущен звонок без history_id: {call}")
                         continue
@@ -341,7 +336,6 @@ async def main():
         if not checklists:
             logger.warning("Чек-листы не загружены или пусты, продолжаем работу с пустым набором чек-листов")
             checklists = []
-            raise ValueError("Чек-листы не загружены или пусты")
         logger.info(f"Получены чек-листы: {checklists}")
         # Передаём app и pool в setup_routes
         setup_routes(app, pool)
@@ -408,12 +402,23 @@ async def main():
                         (last_processed_timestamp, last_processed_history_id)
                     )
                     logger.info(f"Обработано {len(call_data)} звонков, состояние обновлено")                
+                # Вставить этот блок прямо перед else:
+                logger.info("Пересчитываю missing_ids для пропущенных звонков...")
+                call_history_ids = await get_history_ids_from_call_history(pool)
+                call_scores_ids = await get_history_ids_from_call_scores(pool)
+                if call_history_ids and call_scores_ids:
+                    call_history_ids_set = set(row['history_id'] for row in call_history_ids if row.get('history_id') is not None)
+                    call_scores_ids_set = set(row['history_id'] for row in call_scores_ids if row.get('history_id') is not None)
+                    missing_ids = list(call_history_ids_set - call_scores_ids_set)
+                    if missing_ids:
+                        logger.info(f"Найдены пропущенные ID: {missing_ids}, пытаюсь их обработать снова")
+                        await process_missing_calls(missing_ids, pool, checklists, lock)
                 else:
                     logger.info("Новых звонков нет, ожидаю...")                    
 
             except Exception as e:
                 logger.exception("Ошибка внутри цикла обработки звонков, ожидаю следующей попытки через 3 часа.", exc_info=e)
-                await asyncio.sleep(60)  # Пауза перед повторной попыткой в случае ошибки
+                await asyncio.sleep(10800)  # Пауза перед повторной попыткой в случае ошибки
             else:
                 # Если не было ошибок, ожидаем следующей проверки
                 await asyncio.sleep(10800)
