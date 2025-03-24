@@ -57,7 +57,8 @@ CONFIG = {
     'DB_PORT': int(os.getenv('DB_PORT', 3306)),
     'DB_USER': os.getenv('DB_USER'),
     'DB_PASSWORD': os.getenv('DB_PASSWORD'),
-    'DB_NAME': os.getenv('DB_NAME')
+    'DB_NAME': os.getenv('DB_NAME'),
+    'MAX_ATTEMPTS': 3
 }
 
 # Настройка логирования
@@ -232,31 +233,40 @@ async def get_call_data_by_history_ids(pool, history_ids):
     return await execute_async_query(pool, query, tuple(history_ids) + (START_DATE_TIMESTAMP,))
 
 async def process_missing_calls(missing_ids, pool, checklists, lock):
-    """Обработка недостающих звонков."""
+    """Обработка недостающих звонков.
+    Реализована логика повторной обработки: неудачные call_id будут возвращаться в очередь,
+    если количество попыток меньше MAX_ATTEMPTS (по умолчанию 3).
+    """
     failed_ids = {}
+    MAX_ATTEMPTS = CONFIG.get('MAX_ATTEMPTS', 3)  # Максимальное число попыток для каждого call_id
     while missing_ids:
         # Извлекаем батч идентификаторов
         batch_ids = missing_ids[:CONFIG['BATCH_SIZE']]
         missing_ids = missing_ids[CONFIG['BATCH_SIZE']:]
         
+        # Список для повторной обработки call_id из этого батча
+        retry_ids = []
+        
         # Обрабатываем каждый идентификатор из батча отдельно с учетом счетчика попыток
         for call_id in batch_ids:
             failed_ids.setdefault(call_id, 0)
             try:
+                logger.info(f"Пытаюсь обработать пропущенный history_id: {call_id}")
                 # Получаем данные для одного звонка (ожидается список)
+                logger.info(f"Запрашиваю данные для history_id: {call_id}")
                 call_data = await get_call_data_by_history_ids(pool, [call_id])
+                logger.info(f"Получено call_data: {call_data}, тип: {type(call_data)}")
                 if call_data is None:
-                    logger.error(f"Не удалось получить данные о звонке для history_id: {call_id}")
+                    logger.error(f"Проблема с данными для history_id {call_id}: {call_data}")
                     failed_ids[call_id] += 1
                     continue
                 if not isinstance(call_data, list):
-                    logger.error(f"Некорректный тип call_data: {type(call_data)}, ожидался list")
-                    failed_ids[call_id] += 1
-                    continue
+                    logger.warning(f"call_data не является списком для history_id {call_id}, оборачиваю в список")
+                    call_data = [call_data]
                 if not call_data:
-                    logger.info(f"Для history_id {call_id} не найдено данных")
+                    logger.warning(f"Для history_id {call_id} не найдено данных")
                     continue
-
+                
                 tasks = []
                 for call in call_data:
                     # Безопасное получение идентификатора звонка
@@ -276,6 +286,10 @@ async def process_missing_calls(missing_ids, pool, checklists, lock):
                     talk_duration = str(talk_duration)
                     transcript = call.get('transcript')
                     context_start_time = call.get('context_start_time')
+                    
+                    if context_start_time is None:
+                        logger.error(f"Нет context_start_time для history_id {call_id_inner}, пропускаю")
+                        continue
 
                     # Обработка даты с проверкой типа
                     try:
@@ -288,13 +302,16 @@ async def process_missing_calls(missing_ids, pool, checklists, lock):
                         call_date = None
 
                     # Если transcript присутствует, добавляем задачу анализа и сохранения
-                    if transcript:
+                    if transcript and transcript.strip() and call_date:
                         tasks.append(analyze_and_save_call(
                             pool, transcript, checklists, call_id_inner, call_date,
                             called_info, caller_info, talk_duration, lock
                         ))
                     else:
-                        logger.warning(f"Звонок ID {call_id_inner} пропущен: нет transcript")
+                        if not transcript:
+                            logger.warning(f"Звонок ID {call_id_inner} пропущен: нет transcript")
+                        if not call_date:
+                            logger.error(f"Звонок ID {call_id_inner} пропущен: нет call_date")
 
                 # Если задачи сформированы, выполняем их асинхронно
                 if tasks:
@@ -303,22 +320,43 @@ async def process_missing_calls(missing_ids, pool, checklists, lock):
                         for result in results:
                             if isinstance(result, Exception):
                                 logger.error(f"Ошибка в задаче: {result}")
-                        logger.info(f"Успешно обработана партия из {len(tasks)} звонков для history_id {call_id}")
+                            elif isinstance(result, dict) and 'history_id' in result:
+                                logger.info(f"Успешно обработан пропущенный ID {result['history_id']}")
+                            else:
+                                logger.warning(f"Неожиданный тип результата: {type(result)}, значение: {result}")    
+                        if all(not isinstance(r, Exception) for r in results):
+                            if call_id in failed_ids:
+                                del failed_ids[call_id]
                     except Exception as e:
+                        # Если что-то пошло не так на уровне всей партии
                         logger.exception(f"Критическая ошибка при обработке партии звонков для history_id {call_id}: {e}")
-                else:
-                    logger.info(f"Партия пустая, нет звонков с transcript для history_id {call_id}")
-
-                # При успешной обработке удаляем запись из failed_ids
-                if call_id in failed_ids:
-                    del failed_ids[call_id]
+                        if call_id in failed_ids:
+                            failed_ids[call_id] += 1  # Предполагаю, что это инкремент счетчика ошибок
+                        else:
+                            logger.info(f"Партия пустая, нет звонков с transcript для history_id={call_id}")     
             except Exception as e:
-                failed_ids[call_id] += 1
-                logger.exception(f"Ошибка при обработке звонка {call_id}: {e}")
-
-        logger.info(f"Осталось выгрузить {len(missing_ids)} записей для анализа")
+                # Любая непредвиденная ошибка на уровне call_id
+                failed_ids[call_id] = 1
+                logger.exception(f"Ошибка при обработке звонка history_id={call_id}: {e}")
+            # Если обработка данного call_id не удалась, и попытки меньше MAX_ATTEMPTS,
+            # добавляем его обратно в очередь для повторной обработки.
+            if failed_ids.get(call_id, 0) < MAX_ATTEMPTS:
+                retry_ids.append(call_id)
+            else:
+                logger.error(f"Превышено число попыток для history_id {call_id}, пропускаю дальнейшую обработку.")
+        
+        # Реинжектируем неудачные call_id обратно в missing_ids
+        if retry_ids:
+            logger.info(f"Повторно добавляю {len(retry_ids)} call_id для обработки: {retry_ids}")
+            missing_ids.extend(retry_ids)
+            
+        logger.info(f"Осталось выгрузить {len(missing_ids)} записей для анализа")    
+    # По окончании цикла возвращаем списки/счётчики неудач        
+    logger.info(f"Обработка пропущенных звонков завершена. Итоговый словарь ошибок: {failed_ids}")
+    return failed_ids  # Возвращаем для отладки или дальнейшей обработки            
 
 async def main():
+    
     global pool  # Если предполагается изменение глобальной переменной
     logger.info("Начало выполнения скрипта")
     try:
@@ -343,9 +381,9 @@ async def main():
         # Чтение последнего состояния из БД при старте
         state_query = "SELECT last_processed_timestamp, last_processed_history_id FROM processing_state WHERE id = 1"
         state_result = await execute_async_query(pool, state_query)
-        if state_result and state_result[0]['last_processed_timestamp'] is not None:
-            last_processed_timestamp = state_result[0].get('last_processed_timestamp')
-            last_processed_history_id = state_result[0].get('last_processed_history_id')
+        if state_result and state_result[0].get('last_processed_timestamp') is not None:
+            last_processed_timestamp = state_result[0]['last_processed_timestamp']
+            last_processed_history_id = state_result[0]['last_processed_history_id']
             logger.info(f"Загружено состояние из базы: timestamp={last_processed_timestamp}, history_id={last_processed_history_id}")
         else:
             last_processed_timestamp = START_DATE_TIMESTAMP
@@ -380,6 +418,7 @@ async def main():
         # Основной цикл обработки новых звонков
         while True:
             try:
+                logger.info(f"Фильтрую звонки: timestamp > {last_processed_timestamp}, history_id > {last_processed_history_id}")
                 # Запрос изменен: вместо offset используется фильтрация по композитному ключу (context_start_time, history_id)
                 query = """
                 SELECT history_id, called_info, caller_info, talk_duration, transcript, context_start_time
@@ -392,17 +431,19 @@ async def main():
                 """
                 call_data = await execute_async_query(pool, query, (last_processed_timestamp, last_processed_history_id, CONFIG['LIMIT']))
                 if call_data:
+                    logger.info(f"Найдено {len(call_data)} звонков для обработки")
                     await process_calls(call_data, pool, checklists, lock)
                     # Обновляем последнюю обработанную дату
-                    last_call = call_data[-1]
-                    last_processed_timestamp = last_call["context_start_time"]
-                    last_processed_history_id = last_call["history_id"]
+                    # Обновляем состояние на основе последней записи
+                    call = call_data[-1]
+                    last_processed_timestamp = call["context_start_time"]
+                    last_processed_history_id = call["history_id"]
                     await execute_async_query(pool,
                         "REPLACE INTO processing_state (id, last_processed_timestamp, last_processed_history_id) VALUES (1, %s, %s)",
                         (last_processed_timestamp, last_processed_history_id)
                     )
-                    logger.info(f"Обработано {len(call_data)} звонков, состояние обновлено")                
-                # Вставить этот блок прямо перед else:
+                    logger.info(f"Звонок ID {last_processed_history_id} обработан, состояние обновлено")
+                    # Пересчитываем missing_ids для пропущенных звонков
                 logger.info("Пересчитываю missing_ids для пропущенных звонков...")
                 call_history_ids = await get_history_ids_from_call_history(pool)
                 call_scores_ids = await get_history_ids_from_call_scores(pool)
@@ -410,6 +451,7 @@ async def main():
                     call_history_ids_set = set(row['history_id'] for row in call_history_ids if row.get('history_id') is not None)
                     call_scores_ids_set = set(row['history_id'] for row in call_scores_ids if row.get('history_id') is not None)
                     missing_ids = list(call_history_ids_set - call_scores_ids_set)
+                    logger.info(f"Найдено {len(missing_ids)} пропущенных ID")
                     if missing_ids:
                         logger.info(f"Найдены пропущенные ID: {missing_ids}, пытаюсь их обработать снова")
                         await process_missing_calls(missing_ids, pool, checklists, lock)
@@ -417,8 +459,8 @@ async def main():
                     logger.info("Новых звонков нет, ожидаю...")                    
 
             except Exception as e:
-                logger.exception("Ошибка внутри цикла обработки звонков, ожидаю следующей попытки через 3 часа.", exc_info=e)
-                await asyncio.sleep(10800)  # Пауза перед повторной попыткой в случае ошибки
+                logger.exception("Ошибка внутри цикла обработки звонков, ожидаю следующей попытки через 1 час.", exc_info=e)
+                await asyncio.sleep(3600)  # Пауза перед повторной попыткой в случае ошибки
             else:
                 # Если не было ошибок, ожидаем следующей проверки
                 await asyncio.sleep(10800)
