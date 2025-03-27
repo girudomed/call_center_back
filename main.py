@@ -338,17 +338,7 @@ async def process_missing_calls(missing_ids, pool, checklists, lock):
                 # Любая непредвиденная ошибка на уровне call_id
                 failed_ids[call_id] = 1
                 logger.exception(f"Ошибка при обработке звонка history_id={call_id}: {e}")
-            # Если обработка данного call_id не удалась, и попытки меньше MAX_ATTEMPTS,
-            # добавляем его обратно в очередь для повторной обработки.
-            if failed_ids.get(call_id, 0) < MAX_ATTEMPTS:
-                retry_ids.append(call_id)
-            else:
-                logger.error(f"Превышено число попыток для history_id {call_id}, пропускаю дальнейшую обработку.")
-        
-        # Реинжектируем неудачные call_id обратно в missing_ids
-        if retry_ids:
-            logger.info(f"Повторно добавляю {len(retry_ids)} call_id для обработки: {retry_ids}")
-            missing_ids.extend(retry_ids)
+            # Если обработка данного call_id не удалась, и попытки меньше MAX_ATTEMPTS
             
         logger.info(f"Осталось выгрузить {len(missing_ids)} записей для анализа")    
     # По окончании цикла возвращаем списки/счётчики неудач        
@@ -452,9 +442,6 @@ async def main():
                     call_scores_ids_set = set(row['history_id'] for row in call_scores_ids if row.get('history_id') is not None)
                     missing_ids = list(call_history_ids_set - call_scores_ids_set)
                     logger.info(f"Найдено {len(missing_ids)} пропущенных ID")
-                    if missing_ids:
-                        logger.info(f"Найдены пропущенные ID: {missing_ids}, пытаюсь их обработать снова")
-                        await process_missing_calls(missing_ids, pool, checklists, lock)
                 else:
                     logger.info("Новых звонков нет, ожидаю...")                    
 
