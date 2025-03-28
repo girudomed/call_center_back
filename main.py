@@ -54,6 +54,7 @@ CONFIG = {
     'LIMIT': 5,
     'RETRIES': 3,
     'START_DATE': '2024-12-01 00:00:00',
+    'START_DATE_TIMESTAMP': '1733004000',
     'BATCH_SIZE': 30,
     'ENABLE_LOGGING': True,
     'DB_HOST': os.getenv('DB_HOST'),
@@ -236,7 +237,7 @@ async def process_missing_calls(missing_ids, pool, checklists, lock):
     """
     failed_ids = {}  # Словарь для неудачных попыток
     batch_size = CONFIG.get('BATCH_SIZE', 100)  # Берем из конфига, дефолт 100
-    start_date = CONFIG.get('START_DATE', '2023-01-01')  # Фильтр по дате из конфига
+    start_date = CONFIG.get('START_DATE', '2024-12-01 00:00:00')  # Фильтр по дате из конфига
 
     # Вытаскиваем все history_id из call_scores один раз с фильтром по дате
     call_scores_ids = set(await get_history_ids_from_call_scores(pool, start_date=start_date))
@@ -352,9 +353,9 @@ async def get_history_ids_from_call_scores(pool, start_date=None):
         query += " WHERE call_date >= %s"
         params.append(start_date)
     
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(query, *params)
-        return [row['history_id'] for row in rows]           
+    # Заменяем pool.acquire() на execute_async_query
+    rows = await execute_async_query(pool, query, tuple(params))
+    return [row['history_id'] for row in rows if row.get('history_id') is not None]       
 
 async def main():
     global pool
@@ -453,10 +454,22 @@ async def main():
 async def run_app():
     hypercorn_config = hypercorn.config.Config()
     hypercorn_config.bind = ["0.0.0.0:5005"]  # Настройка привязки порта
-    await asyncio.gather(
-        hypercorn.asyncio.serve(app, hypercorn_config),  # Hypercorn в главном loop’е
-        main()                                           # Основная логика рядом
-    )
+    
+    # Добавляем shutdown_trigger для graceful завершения
+    shutdown_event = asyncio.Event()
+    
+    async def shutdown_trigger():
+        await shutdown_event.wait()
+    
+    try:
+        await asyncio.gather(
+            hypercorn.asyncio.serve(app, hypercorn_config, shutdown_trigger=shutdown_trigger),
+            main()
+        )
+    except Exception as e:
+        logger.error(f"Ошибка в run_app: {e}")
+        shutdown_event.set()  # Сигнализируем Hypercorn завершиться
+        raise
 
 if __name__ == '__main__':
     check_and_clear_logs()
@@ -465,7 +478,6 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         logger.info("Получен сигнал прерывания от пользователя (Ctrl+C). Завершение программы.")
     except Exception as e:
-        logger.critical(f"Необработанная ошибка: {e}. Программа будет перезапущена.")
-        restart_program()  # Перезапуск при ошибке в '__main__'
+        logger.critical(f"Необработанная ошибка: {e}. Программа завершена.")
     finally:
         logger.info("Программа завершена.")
