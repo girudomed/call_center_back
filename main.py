@@ -23,6 +23,7 @@ import hypercorn.asyncio
 import hypercorn.config
 from app import setup_routes
 from dotenv import load_dotenv
+from aiomysql import DatabaseError
 
 load_dotenv()
 
@@ -217,11 +218,6 @@ async def get_history_ids_from_call_history(pool):
     query = "SELECT history_id FROM call_history WHERE context_start_time >= %s"
     return await execute_async_query(pool, query, (START_DATE_TIMESTAMP,))
 
-async def get_history_ids_from_call_scores(pool):
-    """Получение идентификаторов истории звонков."""
-    query = "SELECT history_id FROM call_scores WHERE call_date >= %s"
-    return await execute_async_query(pool, query, (CONFIG['START_DATE'],))
-
 async def get_call_data_by_history_ids(pool, history_ids):
     """Получение данных о звонках по идентификаторам."""
     placeholders = ','.join(['%s'] * len(history_ids))  # Используем %s для плейсхолдеров
@@ -234,42 +230,48 @@ async def get_call_data_by_history_ids(pool, history_ids):
 
 async def process_missing_calls(missing_ids, pool, checklists, lock):
     """Обработка недостающих звонков.
-    Реализована логика повторной обработки: неудачные call_id будут возвращаться в очередь,
-    если количество попыток меньше MAX_ATTEMPTS (по умолчанию 3).
+    Каждый history_id обрабатывается ровно один раз. Если звонок уже в call_scores, пропускаем.
     """
-    failed_ids = {}
-    MAX_ATTEMPTS = CONFIG.get('MAX_ATTEMPTS', 3)  # Максимальное число попыток для каждого call_id
+    failed_ids = {}  # Словарь для неудачных попыток
+    batch_size = CONFIG.get('BATCH_SIZE', 100)  # Берем из конфига, дефолт 100
+    start_date = CONFIG.get('START_DATE', '2023-01-01')  # Фильтр по дате из конфига
+
+    # Вытаскиваем все history_id из call_scores один раз с фильтром по дате
+    call_scores_ids = set(await get_history_ids_from_call_scores(pool, start_date=start_date))
+
     while missing_ids:
         # Извлекаем батч идентификаторов
-        batch_ids = missing_ids[:CONFIG['BATCH_SIZE']]
-        missing_ids = missing_ids[CONFIG['BATCH_SIZE']:]
-        
-        # Список для повторной обработки call_id из этого батча
-        retry_ids = []
-        
-        # Обрабатываем каждый идентификатор из батча отдельно с учетом счетчика попыток
+        batch_ids = missing_ids[:batch_size]
+        missing_ids = missing_ids[batch_size:]
+
         for call_id in batch_ids:
             failed_ids.setdefault(call_id, 0)
             try:
                 logger.info(f"Пытаюсь обработать пропущенный history_id: {call_id}")
-                # Получаем данные для одного звонка (ожидается список)
+
+                # Проверяем, есть ли звонок уже в call_scores через set
+                if call_id in call_scores_ids:
+                    logger.info(f"history_id {call_id} уже обработан, пропускаю")
+                    continue
+
+                # Получаем данные для звонка
                 logger.info(f"Запрашиваю данные для history_id: {call_id}")
                 call_data = await get_call_data_by_history_ids(pool, [call_id])
                 logger.info(f"Получено call_data: {call_data}, тип: {type(call_data)}")
+
                 if call_data is None:
                     logger.error(f"Проблема с данными для history_id {call_id}: {call_data}")
                     failed_ids[call_id] += 1
                     continue
                 if not isinstance(call_data, list):
-                    logger.warning(f"call_data не является списком для history_id {call_id}, оборачиваю в список")
+                    logger.warning(f"call_data не список для history_id {call_id}, оборачиваю")
                     call_data = [call_data]
                 if not call_data:
                     logger.warning(f"Для history_id {call_id} не найдено данных")
                     continue
-                
+
                 tasks = []
                 for call in call_data:
-                    # Безопасное получение идентификатора звонка
                     call_id_inner = call.get('history_id')
                     if call_id_inner is None:
                         logger.error(f"Пропущен звонок без history_id: {call}")
@@ -277,139 +279,135 @@ async def process_missing_calls(missing_ids, pool, checklists, lock):
 
                     logger.info(f"Начинаю обработку звонка ID: {call_id_inner}")
 
-                    # Извлекаем остальные данные с значениями по умолчанию
+                    # Извлекаем данные с дефолтами
                     called_info = call.get('called_info', 'Неизвестно')
                     caller_info = call.get('caller_info', 'Неизвестно')
-                    talk_duration = call.get('talk_duration', 0)
-                    if talk_duration is None:
-                        talk_duration = 0
-                    talk_duration = str(talk_duration)
+                    talk_duration = call.get('talk_duration', 0) or 0
+                    talk_duration = str(talk_duration)  # Оставляем как varchar(50)
                     transcript = call.get('transcript')
                     context_start_time = call.get('context_start_time')
-                    
+
                     if context_start_time is None:
                         logger.error(f"Нет context_start_time для history_id {call_id_inner}, пропускаю")
                         continue
 
-                    # Обработка даты с проверкой типа
+                    # Преобразуем дату
                     try:
                         if isinstance(context_start_time, (int, float)):
                             call_date = timestamp_to_datetime(context_start_time).strftime('%Y-%m-%d %H:%M:%S')
                         else:
                             call_date = None
                     except Exception as e:
-                        logger.error(f"Ошибка преобразования context_start_time для звонка ID {call_id_inner}: {e}")
+                        logger.error(f"Ошибка преобразования context_start_time для ID {call_id_inner}: {e}")
                         call_date = None
 
-                    # Если transcript присутствует, добавляем задачу анализа и сохранения
-                    if transcript and transcript.strip() and call_date:
-                        tasks.append(analyze_and_save_call(
-                            pool, transcript, checklists, call_id_inner, call_date,
-                            called_info, caller_info, talk_duration, lock
-                        ))
-                    else:
-                        if not transcript:
-                            logger.warning(f"Звонок ID {call_id_inner} пропущен: нет transcript")
-                        if not call_date:
-                            logger.error(f"Звонок ID {call_id_inner} пропущен: нет call_date")
+                    if not call_date:
+                        logger.error(f"Звонок ID {call_id_inner} пропущен: нет call_date")
+                        continue
 
-                # Если задачи сформированы, выполняем их асинхронно
+                    if not transcript or not transcript.strip():
+                        logger.warning(f"Звонок ID {call_id_inner} пропущен: нет transcript или пустой")
+                        continue
+
+                    # Формируем задачу
+                    tasks.append(analyze_and_save_call(
+                        pool, transcript, checklists, call_id_inner, call_date,
+                        called_info, caller_info, talk_duration, lock
+                    ))
+
+                # Выполняем задачи
                 if tasks:
                     try:
                         results = await asyncio.gather(*tasks, return_exceptions=True)
                         for result in results:
                             if isinstance(result, Exception):
                                 logger.error(f"Ошибка в задаче: {result}")
+                                failed_ids[call_id] += 1
                             elif isinstance(result, dict) and 'history_id' in result:
-                                logger.info(f"Успешно обработан пропущенный ID {result['history_id']}")
+                                logger.info(f"Успешно обработан ID {result['history_id']}")
+                                if call_id in failed_ids:
+                                    del failed_ids[call_id]  # Убираем из failed_ids при успехе
+                                call_scores_ids.add(call_id)  # Добавляем в set, чтобы не повторять
                             else:
-                                logger.warning(f"Неожиданный тип результата: {type(result)}, значение: {result}")    
-                        if all(not isinstance(r, Exception) for r in results):
-                            if call_id in failed_ids:
-                                del failed_ids[call_id]
+                                logger.warning(f"Неожиданный результат: {type(result)}, значение: {result}")
                     except Exception as e:
-                        # Если что-то пошло не так на уровне всей партии
-                        logger.exception(f"Критическая ошибка при обработке партии звонков для history_id {call_id}: {e}")
-                        if call_id in failed_ids:
-                            failed_ids[call_id] += 1  # Предполагаю, что это инкремент счетчика ошибок
-                        else:
-                            logger.info(f"Партия пустая, нет звонков с transcript для history_id={call_id}")     
+                        logger.exception(f"Критическая ошибка в батче для history_id {call_id}: {e}")
+                        failed_ids[call_id] += 1
+
             except Exception as e:
-                # Любая непредвиденная ошибка на уровне call_id
-                failed_ids[call_id] = 1
-                logger.exception(f"Ошибка при обработке звонка history_id={call_id}: {e}")
-            # Если обработка данного call_id не удалась, и попытки меньше MAX_ATTEMPTS
-            
-        logger.info(f"Осталось выгрузить {len(missing_ids)} записей для анализа")    
-    # По окончании цикла возвращаем списки/счётчики неудач        
-    logger.info(f"Обработка пропущенных звонков завершена. Итоговый словарь ошибок: {failed_ids}")
-    return failed_ids  # Возвращаем для отладки или дальнейшей обработки            
+                logger.exception(f"Ошибка при обработке history_id={call_id}: {e}")
+                failed_ids[call_id] += 1
+
+    logger.info(f"Осталось выгрузить {len(missing_ids)} записей для анализа")
+    logger.info(f"Обработка завершена. Итоговый словарь ошибок: {failed_ids}")
+    return failed_ids
+
+# Вспомогательная функция для вытаскивания history_id
+async def get_history_ids_from_call_scores(pool, start_date=None):
+    query = "SELECT history_id FROM call_scores"
+    params = []
+    if start_date:
+        query += " WHERE call_date >= %s"
+        params.append(start_date)
+    
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(query, *params)
+        return [row['history_id'] for row in rows]           
 
 async def main():
-    
-    global pool  # Если предполагается изменение глобальной переменной
+    global pool
     logger.info("Начало выполнения скрипта")
     try:
-        await initialize_db_pool()
-        if pool is None:
-            raise RuntimeError("Не удалось инициализировать пул соединений")
+        await initialize_db_pool()  # Ошибки пул кидает сам
         logger.info("Пул соединений MySQL успешно инициализирован.")
 
         asyncio.create_task(schedule_db_state_logging(logging_interval=10800))
 
-        # Вызываем create_tables и get_checklists_and_criteria без получения connection
-        # так как они будут использовать execute_async_query(pool, ...) внутри
         await create_tables(pool)
         checklists = await get_checklists_and_criteria(pool)
         if not checklists:
-            logger.warning("Чек-листы не загружены или пусты, продолжаем работу с пустым набором чек-листов")
+            logger.warning("Чек-листы не загружены или пусты, продолжаем с пустым набором")
             checklists = []
-        logger.info(f"Получены чек-листы: {checklists}")
-        # Передаём app и pool в setup_routes
+        logger.info(f"Получено {len(checklists)} чек-листов")
         setup_routes(app, pool)
 
-        # Чтение последнего состояния из БД при старте
+        # Чтение состояния из БД
         state_query = "SELECT last_processed_timestamp, last_processed_history_id FROM processing_state WHERE id = 1"
         state_result = await execute_async_query(pool, state_query)
         if state_result and state_result[0].get('last_processed_timestamp') is not None:
             last_processed_timestamp = state_result[0]['last_processed_timestamp']
             last_processed_history_id = state_result[0]['last_processed_history_id']
-            logger.info(f"Загружено состояние из базы: timestamp={last_processed_timestamp}, history_id={last_processed_history_id}")
+            logger.info(f"Состояние из базы: timestamp={last_processed_timestamp}, history_id={last_processed_history_id}")
         else:
             last_processed_timestamp = START_DATE_TIMESTAMP
-            # Определяем автоматически последний обработанный history_id из call_scores,
-            # так как обработанные звонки с транскриптом заносятся в таблицу call_scores.
             query = "SELECT MAX(history_id) AS max_id FROM call_scores WHERE call_date >= %s"
             result = await execute_async_query(pool, query, (CONFIG['START_DATE'],))
-            if result and result[0].get('max_id') is not None:
-                last_processed_history_id = result[0]['max_id']
-            else:
-                last_processed_history_id = 0
-            logger.info(f"Используются начальные значения состояния: timestamp={last_processed_timestamp}, history_id={last_processed_history_id}")
-                # Получаем идентификаторы звонков из таблиц call_history и call_scores
-        call_history_ids = await get_history_ids_from_call_history(pool)
-        if call_history_ids is None:
-            logger.error("Не удалось получить идентификаторы истории звонков")
-            return
+            last_processed_history_id = result[0]['max_id'] if result and result[0].get('max_id') is not None else 0
+            logger.info(f"Начальное состояние: timestamp={last_processed_timestamp}, history_id={last_processed_history_id}")
 
-        call_scores_ids = await get_history_ids_from_call_scores(pool)
-        if call_scores_ids is None:
-            logger.error("Не удалось получить идентификаторы оценок звонков")
-            return
-
-        call_history_ids_set = set(row['history_id'] for row in call_history_ids if row.get('history_id') is not None)
-        call_scores_ids_set = set(row['history_id'] for row in call_scores_ids if row.get('history_id') is not None)
-        missing_ids = list(call_history_ids_set - call_scores_ids_set)
-        logger.info(f"Отсутствующие ID: {missing_ids}")
-
+        # Пропущенные ID одним запросом
+        missing_ids_query = """
+        SELECT ch.history_id
+        FROM call_history ch
+        LEFT JOIN call_scores cs ON ch.history_id = cs.history_id
+        WHERE cs.history_id IS NULL AND ch.call_date >= %s
+        """
+        missing_ids_result = await execute_async_query(pool, missing_ids_query, (CONFIG['START_DATE'],))
+        if missing_ids_result is not None:
+            missing_ids = [row['history_id'] for row in missing_ids_result if row.get('history_id') is not None]
+            logger.info(f"Пропущенные ID: {len(missing_ids)} шт.")
+        else:    
+            missing_ids = []
+            logger.error("Не удалось получить пропущенные ID, missing_ids_result is None")
+        logger.info(f"Пропущенные ID: {len(missing_ids)} шт.")
+        
         if missing_ids:
             await process_missing_calls(missing_ids, pool, checklists, lock)
 
-        # Основной цикл обработки новых звонков
+        # Основной цикл
         while True:
             try:
                 logger.info(f"Фильтрую звонки: timestamp > {last_processed_timestamp}, history_id > {last_processed_history_id}")
-                # Запрос изменен: вместо offset используется фильтрация по композитному ключу (context_start_time, history_id)
                 query = """
                 SELECT history_id, called_info, caller_info, talk_duration, transcript, context_start_time
                 FROM call_history 
@@ -423,8 +421,6 @@ async def main():
                 if call_data:
                     logger.info(f"Найдено {len(call_data)} звонков для обработки")
                     await process_calls(call_data, pool, checklists, lock)
-                    # Обновляем последнюю обработанную дату
-                    # Обновляем состояние на основе последней записи
                     call = call_data[-1]
                     last_processed_timestamp = call["context_start_time"]
                     last_processed_history_id = call["history_id"]
@@ -433,33 +429,24 @@ async def main():
                         (last_processed_timestamp, last_processed_history_id)
                     )
                     logger.info(f"Звонок ID {last_processed_history_id} обработан, состояние обновлено")
-                    # Пересчитываем missing_ids для пропущенных звонков
-                logger.info("Пересчитываю missing_ids для пропущенных звонков...")
-                call_history_ids = await get_history_ids_from_call_history(pool)
-                call_scores_ids = await get_history_ids_from_call_scores(pool)
-                if call_history_ids and call_scores_ids:
-                    call_history_ids_set = set(row['history_id'] for row in call_history_ids if row.get('history_id') is not None)
-                    call_scores_ids_set = set(row['history_id'] for row in call_scores_ids if row.get('history_id') is not None)
-                    missing_ids = list(call_history_ids_set - call_scores_ids_set)
-                    logger.info(f"Найдено {len(missing_ids)} пропущенных ID")
                 else:
-                    logger.info("Новых звонков нет, ожидаю...")                    
-
-            except Exception as e:
-                logger.exception("Ошибка внутри цикла обработки звонков, ожидаю следующей попытки через 1 час.", exc_info=e)
-                await asyncio.sleep(3600)  # Пауза перед повторной попыткой в случае ошибки
-            else:
-                # Если не было ошибок, ожидаем следующей проверки
+                    logger.info("Новых звонков нет, жду...")
                 await asyncio.sleep(10800)
+            except DatabaseError as e:
+                logger.error(f"Ошибка базы: {e}, пытаюсь переподключиться")
+                await initialize_db_pool()
+            except Exception as e:
+                logger.exception(f"Неизвестная хуйня: {e}")
+                await asyncio.sleep(3600)
     except asyncio.CancelledError:
-        logger.info("Основная задача отменена.")
+        logger.info("Задача отменена")
         raise
     except Exception as e:
-        logger.exception(f"Критическая ошибка: {e}")
+        logger.exception(f"Критическая хуйня: {e}")
         restart_program()
     finally:
-        await close_db_pool()  # <— ВАЖНО! Теперь пул соединений будет закрыт корректно
-        logger.info("Соединение с базой данных закрыто")
+        await close_db_pool()
+        logger.info("База закрыта")
 
 def run_flask():
     hypercorn_config = hypercorn.config.Config()
