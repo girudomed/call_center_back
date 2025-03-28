@@ -138,9 +138,9 @@ async def schedule_db_state_logging(logging_interval=200):
 START_DATE_TIMESTAMP = int(dt.datetime.strptime(CONFIG['START_DATE'], '%Y-%m-%d %H:%M:%S').timestamp())
 
 
-def datetime_to_timestamp(dt_object):
-    """Преобразование объекта datetime в таймстемп."""
-    return int(dt_object.timestamp())
+def datetime_to_timestamp(dt_str):
+    """Конверт строки даты в Unix timestamp."""
+    return int(datetime.strptime(dt_str, '%Y-%m-%d %H:%M:%S').timestamp())
 
 def timestamp_to_datetime(timestamp):
     """Преобразование таймстемпа в объект datetime."""
@@ -219,7 +219,11 @@ async def analyze_and_save_call(pool, transcript, checklists, call_id, call_date
 
 async def get_history_ids_from_call_history(pool):
     query = "SELECT history_id FROM call_history WHERE context_start_time >= %s"
-    return await execute_async_query(pool, query, (START_DATE_TIMESTAMP,))
+    rows = await execute_async_query(pool, query, (START_DATE_TIMESTAMP,))
+    if rows is None:
+        print("Получили None, возвращаем пустой список")  # Лучше logger.warning
+        return []
+    return [row['history_id'] for row in rows if row.get('history_id') is not None]
 
 async def get_call_data_by_history_ids(pool, history_ids):
     placeholders = ','.join(['%s'] * len(history_ids))
@@ -241,10 +245,8 @@ async def process_missing_calls(missing_ids, pool, checklists, lock):
     """
     failed_ids = {}  # Словарь для неудачных попыток
     batch_size = CONFIG.get('BATCH_SIZE', 100)  # Берем из конфига, дефолт 100
-    start_date = CONFIG.get('START_DATE', '2024-12-01 00:00:00')  # Фильтр по дате из конфига
-
     # Вытаскиваем все history_id из call_scores один раз с фильтром по дате
-    call_scores_ids = set(await get_history_ids_from_call_scores(pool, start_date=start_date))
+    call_scores_ids = set(await get_history_ids_from_call_scores(pool, start_date=CONFIG['START_DATE']))
 
     while missing_ids:
         # Извлекаем батч идентификаторов
@@ -366,6 +368,7 @@ async def get_history_ids_from_call_scores(pool, start_date=None):
     return [row['history_id'] for row in rows if row.get('history_id') is not None]
 
 async def main():
+    START_DATE_TIMESTAMP = datetime_to_timestamp(CONFIG['START_DATE'])
     global pool
     logger.info("Начало выполнения скрипта")
     try:
@@ -403,7 +406,7 @@ async def main():
         LEFT JOIN call_scores cs ON ch.history_id = cs.history_id
         WHERE cs.history_id IS NULL AND ch.context_start_time >= %s
         """
-        missing_ids_result = await execute_async_query(pool, missing_ids_query, (CONFIG['START_DATE'],))
+        missing_ids_result = await execute_async_query(pool, missing_ids_query, (START_DATE_TIMESTAMP,))
         if missing_ids_result is not None:
             missing_ids = [row['history_id'] for row in missing_ids_result if row.get('history_id') is not None]
             logger.info(f"Пропущенные ID: {len(missing_ids)} шт.")
