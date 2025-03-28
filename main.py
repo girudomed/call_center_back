@@ -168,6 +168,22 @@ async def process_calls(calls, pool, checklists, lock):
 
 async def analyze_and_save_call(pool, transcript, checklists, call_id, call_date, called_info, caller_info, talk_duration, lock):
     """Анализ и сохранение результатов звонка."""
+    # Проверка входных данных
+    if not isinstance(transcript, str):
+        logger.error(f"transcript должен быть строкой, получено: {type(transcript)}")
+        raise ValueError("transcript должен быть строкой")
+    if not isinstance(call_id, (int, str)):
+        logger.error(f"call_id должен быть int или str, получено: {type(call_id)}")
+        raise ValueError("call_id должен быть int или str")
+    if not isinstance(called_info, str):
+        logger.error(f"called_info должен быть строкой, получено: {type(called_info)}")
+        raise ValueError("called_info должен быть строкой")
+    if not isinstance(caller_info, str):
+        logger.error(f"caller_info должен быть строкой, получено: {type(caller_info)}")
+        raise ValueError("caller_info должен быть строкой")
+    if not isinstance(talk_duration, (int, float)):
+        logger.error(f"talk_duration должен быть числом, получено: {type(talk_duration)}")
+        raise ValueError("talk_duration должен быть числом")
     if isinstance(checklists, str):
         checklists = json.loads(checklists)  # Преобразование из JSON-строки в список
     elif isinstance(checklists, tuple):
@@ -230,14 +246,13 @@ async def get_call_data_by_history_ids(pool, history_ids):
     query = f"""
     SELECT history_id, called_info, caller_info, talk_duration, transcript, context_start_time
     FROM call_history
-    WHERE history_id IN ({placeholders}) AND context_start_time >= %s
+    WHERE history_id IN ({placeholders})
     """
-    rows = await execute_async_query(pool, query, tuple(history_ids) + (START_DATE_TIMESTAMP,))
+    params = tuple(history_ids)  # Убедись, что history_ids — список чисел, например [73444]
+    rows = await execute_async_query(pool, query, params)
     if rows is None:
-        print("Получили None вместо списка, возвращаем пустой список")  # Лучше logger.warning
         return []
-    columns = ['history_id', 'called_info', 'caller_info', 'talk_duration', 'transcript', 'context_start_time']
-    return [dict(zip(columns, row)) for row in rows]
+    return rows
 
 async def process_missing_calls(missing_ids, pool, checklists, lock):
     """Обработка недостающих звонков.
