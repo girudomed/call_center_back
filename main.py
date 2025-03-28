@@ -21,6 +21,8 @@ import socket
 from logging.handlers import RotatingFileHandler
 import hypercorn.asyncio
 import hypercorn.config
+from hypercorn.asyncio import serve
+from hypercorn.config import Config
 from app import setup_routes
 from dotenv import load_dotenv
 from aiomysql import DatabaseError
@@ -390,7 +392,7 @@ async def main():
         SELECT ch.history_id
         FROM call_history ch
         LEFT JOIN call_scores cs ON ch.history_id = cs.history_id
-        WHERE cs.history_id IS NULL AND ch.call_date >= %s
+        WHERE cs.history_id IS NULL AND ch.context_start_time >= %s
         """
         missing_ids_result = await execute_async_query(pool, missing_ids_query, (CONFIG['START_DATE'],))
         if missing_ids_result is not None:
@@ -448,19 +450,18 @@ async def main():
         await close_db_pool()
         logger.info("База закрыта")
 
-def run_flask():
+async def run_app():
     hypercorn_config = hypercorn.config.Config()
     hypercorn_config.bind = ["0.0.0.0:5005"]  # Настройка привязки порта
-    loop = asyncio.new_event_loop()  # Создаем новый event loop
-    asyncio.set_event_loop(loop)  # Устанавливаем его как текущий loop
-    loop.run_until_complete(hypercorn.asyncio.serve(app, hypercorn_config))
+    await asyncio.gather(
+        hypercorn.asyncio.serve(app, hypercorn_config),  # Hypercorn в главном loop’е
+        main()                                           # Основная логика рядом
+    )
 
 if __name__ == '__main__':
     check_and_clear_logs()
-    flask_thread = threading.Thread(target=run_flask)
-    flask_thread.start()
     try:
-        asyncio.run(main())
+        asyncio.run(run_app())
     except KeyboardInterrupt:
         logger.info("Получен сигнал прерывания от пользователя (Ctrl+C). Завершение программы.")
     except Exception as e:
