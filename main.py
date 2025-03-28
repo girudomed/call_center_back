@@ -222,14 +222,18 @@ async def get_history_ids_from_call_history(pool):
     return await execute_async_query(pool, query, (START_DATE_TIMESTAMP,))
 
 async def get_call_data_by_history_ids(pool, history_ids):
-    """Получение данных о звонках по идентификаторам."""
-    placeholders = ','.join(['%s'] * len(history_ids))  # Используем %s для плейсхолдеров
+    placeholders = ','.join(['%s'] * len(history_ids))
     query = f"""
     SELECT history_id, called_info, caller_info, talk_duration, transcript, context_start_time
     FROM call_history
     WHERE history_id IN ({placeholders}) AND context_start_time >= %s
     """
-    return await execute_async_query(pool, query, tuple(history_ids) + (START_DATE_TIMESTAMP,))
+    rows = await execute_async_query(pool, query, tuple(history_ids) + (START_DATE_TIMESTAMP,))
+    if rows is None:
+        print("Получили None вместо списка, возвращаем пустой список")  # Лучше logger.warning
+        return []
+    columns = ['history_id', 'called_info', 'caller_info', 'talk_duration', 'transcript', 'context_start_time']
+    return [dict(zip(columns, row)) for row in rows]
 
 async def process_missing_calls(missing_ids, pool, checklists, lock):
     """Обработка недостающих звонков.
@@ -275,11 +279,13 @@ async def process_missing_calls(missing_ids, pool, checklists, lock):
 
                 tasks = []
                 for call in call_data:
+                    if isinstance(call, tuple):
+                        logger.warning(f"call_data для {call_id} вернул кортеж, ожидался словарь: {call}")
+                        continue  # Пропускаем, если формат не тот, или можно добавить преобразование
                     call_id_inner = call.get('history_id')
                     if call_id_inner is None:
                         logger.error(f"Пропущен звонок без history_id: {call}")
                         continue
-
                     logger.info(f"Начинаю обработку звонка ID: {call_id_inner}")
 
                     # Извлекаем данные с дефолтами
@@ -299,7 +305,7 @@ async def process_missing_calls(missing_ids, pool, checklists, lock):
                         if isinstance(context_start_time, (int, float)):
                             call_date = timestamp_to_datetime(context_start_time).strftime('%Y-%m-%d %H:%M:%S')
                         else:
-                            call_date = None
+                            call_date = context_start_time  # Если уже строка, оставляем
                     except Exception as e:
                         logger.error(f"Ошибка преобразования context_start_time для ID {call_id_inner}: {e}")
                         call_date = None
@@ -353,9 +359,11 @@ async def get_history_ids_from_call_scores(pool, start_date=None):
         query += " WHERE call_date >= %s"
         params.append(start_date)
     
-    # Заменяем pool.acquire() на execute_async_query
     rows = await execute_async_query(pool, query, tuple(params))
-    return [row['history_id'] for row in rows if row.get('history_id') is not None]       
+    if rows is None:
+        print("Получили None вместо списка, возвращаем пустой список")  # Лучше logger.warning
+        return []
+    return [row['history_id'] for row in rows if row.get('history_id') is not None]
 
 async def main():
     global pool
