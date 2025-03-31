@@ -147,14 +147,25 @@ def timestamp_to_datetime(timestamp):
     return dt.datetime.fromtimestamp(timestamp)
 
 async def process_calls(calls, pool, checklists, lock):
-    async with lock:
-        """Обработка списка звонков."""
         tasks = []
         for call in calls:
             call_id = call['history_id']
             called_info = call['called_info']
             caller_info = call['caller_info']
-            talk_duration = str(call['talk_duration'])
+            raw_talk = call['talk_duration']
+            if raw_talk is None:
+                talk_duration = 0
+            elif isinstance(raw_talk, str):
+                try:
+                    talk_duration = int(raw_talk)
+                except ValueError:
+                    logger.error(f"Невозможно преобразовать talk_duration={raw_talk} к int для ID {call_id}")
+                    continue
+            elif isinstance(raw_talk, (int, float)):
+                talk_duration = int(raw_talk)
+            else:
+                logger.warning(f"talk_duration неизвестного типа: {raw_talk} для ID {call_id}")
+                continue
             transcript = call['transcript']
             context_start_time = call['context_start_time']
             call_date = timestamp_to_datetime(context_start_time).strftime('%Y-%m-%d %H:%M:%S') if context_start_time else None
@@ -171,73 +182,84 @@ async def analyze_and_save_call(pool, transcript, checklists, call_id, call_date
     # Проверка входных данных
     if not isinstance(transcript, str):
         logger.error(f"transcript должен быть строкой, получено: {type(transcript)}")
-        raise ValueError("transcript должен быть строкой")
+        return {'history_id': call_id, 'status': 'failed'}
     if not isinstance(call_id, (int, str)):
         logger.error(f"call_id должен быть int или str, получено: {type(call_id)}")
-        raise ValueError("call_id должен быть int или str")
+        return {'history_id': call_id, 'status': 'failed'}
     if not isinstance(called_info, str):
         logger.error(f"called_info должен быть строкой, получено: {type(called_info)}")
-        raise ValueError("called_info должен быть строкой")
+        return {'history_id': call_id, 'status': 'failed'}
     if not isinstance(caller_info, str):
-        logger.error(f"caller_info должен быть строкой, получено: {type(caller_info)}")
-        raise ValueError("caller_info должен быть строкой")
-    if not isinstance(talk_duration, (int, float)):
+        logger.error(f" caller_info должен быть строкой, получено: {type(caller_info)}")
+        return {'history_id': call_id, 'status': 'failed'}
+    if not isinstance(talk_duration, int):
         logger.error(f"talk_duration должен быть числом, получено: {type(talk_duration)}")
-        raise ValueError("talk_duration должен быть числом")
-    if isinstance(checklists, str):
-        checklists = json.loads(checklists)  # Преобразование из JSON-строки в список
-    elif isinstance(checklists, tuple):
-        checklists = list(checklists)  # Преобразование кортежа в список
+        return {'history_id': call_id, 'status': 'failed'}
 
-    # Цикл для повторных попыток анализа
+    # Преобразование checklists
+    if isinstance(checklists, str):
+        try:
+            checklists = json.loads(checklists)
+        except json.JSONDecodeError as e:
+            logger.error(f"Ошибка при парсинге checklists: {e}")
+            return {'history_id': call_id, 'status': 'failed'}
+    elif isinstance(checklists, tuple):
+        checklists = list(checklists)
+
+    # Цикл для повторных попыток
     for attempt in range(CONFIG['RETRIES']):
         try:
-            # Выполняем анализ звонка с помощью GPT
+            # Анализ звонка через GPT
             score, result, call_category_clean, category_number, checklist_result = await analyze_call_with_gpt(transcript, checklists)
             
             if result is None:
-                logger.error(f"Ошибка при анализе звонка {call_id}, пропуск сохранения результатов")
-                return
+                logger.error(f"Ошибка при анализе звонка {call_id}, пропуск сохранения")
+                return {'history_id': call_id, 'status': 'failed'}
 
             logger.info(f"Анализ звонка {call_id}: результат={result}, категория={call_category_clean}, чек-лист={checklist_result}")
-            checklist_number = category_number
-            checklist_category = checklist_result
 
-            # Блокировка для безопасного сохранения результатов в базе данных
+            # Сохранение в базу
             async with lock:
                 connection = await pool.get_connection()
                 try:
                     await save_call_score(
                         connection, call_id, score, call_category_clean, call_date, called_info, caller_info,
-                        talk_duration, transcript, result, category_number, checklist_number, checklist_category
+                        talk_duration, transcript, result, category_number, category_number, checklist_result
                     )
                 finally:
                     await pool.release_connection(connection)
-                    logger.info(f"Звонок {call_id} сохранен с результатом: {result}")
 
+            # Логируем результат перед возвратом
             log_analysis_result(call_id, result)
-            break  # Успешное завершение, выходим из цикла
+            
+            # Успех, возвращаем результат
+            return {'history_id': call_id, 'status': 'success'}
 
         except openai.RateLimitError as e:
             logger.warning(f"Превышен лимит запросов для звонка {call_id}: {e}")
             if attempt < CONFIG['RETRIES'] - 1:
-                await asyncio.sleep(2 ** attempt)  # Экспоненциальная задержка между попытками
+                await asyncio.sleep(2 ** attempt)  # Экспоненциальная задержка
                 continue
             else:
                 logger.error(f"Превышен лимит попыток для звонка {call_id}")
-                break
+                return {'history_id': call_id, 'status': 'failed'}
+
         except aiohttp.ClientError as e:
             logger.error(f"Сетевая ошибка для звонка {call_id}: {e}")
-            break
+            return {'history_id': call_id, 'status': 'failed'}
+
         except Exception as e:
             logger.exception(f"Ошибка при анализе звонка {call_id}: {e}")
-            break
+            return {'history_id': call_id, 'status': 'failed'}
+
+    # Если все попытки провалились
+    return {'history_id': call_id, 'status': 'failed'}
 
 async def get_history_ids_from_call_history(pool):
     query = "SELECT history_id FROM call_history WHERE context_start_time >= %s"
     rows = await execute_async_query(pool, query, (START_DATE_TIMESTAMP,))
     if rows is None:
-        print("Получили None, возвращаем пустой список")  # Лучше logger.warning
+        logger.warning("Получили None вместо списка history_id из call_history, возвращаем пустой список")
         return []
     return [row['history_id'] for row in rows if row.get('history_id') is not None]
 
@@ -297,35 +319,33 @@ async def process_missing_calls(missing_ids, pool, checklists, lock):
                 caller_info = call.get('caller_info', 'Неизвестно')
                 raw_talk = call.get('talk_duration')
                 if raw_talk is None:
-                    talk_duration = 0
-                elif isinstance(raw_talk, (int, float)):
-                    talk_duration = int(raw_talk)
+                    talk_duration = 0  # Если нет значения, ставим 0
                 elif isinstance(raw_talk, str):
                     try:
-                        talk_duration = int(raw_talk)
+                        talk_duration = int(raw_talk)  # Если строка, преобразуем в int
                     except ValueError:
-                        logger.error(f"Невозможно преобразовать talk_duration={raw_talk} к числу, пропускаю")
+                        logger.error(f"Невозможно преобразовать talk_duration={raw_talk} к int, пропускаю")
                         continue
+                elif isinstance(raw_talk, (int, float)):
+                    talk_duration = int(raw_talk)  # Если число, приводим к int
                 else:
                     logger.warning(f"talk_duration неизвестного типа: {raw_talk}, пропускаю")
                     continue
-                transcript = call.get('transcript')
-                context_start_time = call.get('context_start_time')
-                
-                if context_start_time is None:
-                    logger.error(f"Нет context_start_time для ID {call_id}")
-                    continue
                 
                 # Преобразуем дату
-                try:
-                    if isinstance(context_start_time, (int, float)):
-                        call_date = timestamp_to_datetime(context_start_time).strftime('%Y-%m-%d %H:%M:%S')
-                    else:
-                        call_date = context_start_time  # Если строка, оставляем
-                except Exception as e:
-                    logger.error(f"Ошибка даты для ID {call_id}: {e}")
+                context_start_time = call.get('context_start_time')
+                transcript = call.get('transcript')
+
+                if context_start_time is None:
+                    logger.error(f"Нет context_start_time для ID {call_id}, пропускаю")
                     continue
-                
+
+                try:
+                    call_date = timestamp_to_datetime(context_start_time).strftime('%Y-%m-%d %H:%M:%S')
+                except Exception as e:
+                    logger.error(f"Ошибка преобразования даты для ID {call_id}: {e}, context_start_time={context_start_time}")
+                    continue
+
                 if not transcript or not transcript.strip():
                     logger.warning(f"Нет transcript для ID {call_id}, пропускаю")
                     continue
@@ -369,7 +389,7 @@ async def get_history_ids_from_call_scores(pool, start_date=None):
     
     rows = await execute_async_query(pool, query, tuple(params))
     if rows is None:
-        print("Получили None вместо списка, возвращаем пустой список")  # Лучше logger.warning
+        logger.warning("Получили None вместо списка history_id из call_scores, возвращаем пустой список")
         return []
     return [row['history_id'] for row in rows if row.get('history_id') is not None]
 
