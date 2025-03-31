@@ -295,7 +295,20 @@ async def process_missing_calls(missing_ids, pool, checklists, lock):
                 # Вытаскиваем данные с дефолтами
                 called_info = call.get('called_info', 'Неизвестно')
                 caller_info = call.get('caller_info', 'Неизвестно')
-                talk_duration = call.get('talk_duration', '0') or '0'
+                raw_talk = call.get('talk_duration')
+                if raw_talk is None:
+                    talk_duration = 0
+                elif isinstance(raw_talk, (int, float)):
+                    talk_duration = int(raw_talk)
+                elif isinstance(raw_talk, str):
+                    try:
+                        talk_duration = int(raw_talk)
+                    except ValueError:
+                        logger.error(f"Невозможно преобразовать talk_duration={raw_talk} к числу, пропускаю")
+                        continue
+                else:
+                    logger.warning(f"talk_duration неизвестного типа: {raw_talk}, пропускаю")
+                    continue
                 transcript = call.get('transcript')
                 context_start_time = call.get('context_start_time')
                 
