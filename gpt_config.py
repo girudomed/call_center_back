@@ -172,28 +172,59 @@ async def analyze_call_with_gpt(transcript, checklists):
     except Exception as e:
         logger.error(f"Неизвестная ошибка: {e}")
         return None, None, None, None, None
+            
 
 async def save_call_score(connection, call_id, score, call_category, call_date, called_info, caller_info, talk_duration, transcript, result, category_number, checklist_number, checklist_category):
-    if score is None or result is None:
-        logger.info(f"Пропуск сохранения данных звонка: {call_id} из-за отсутствия анализа.")
-        return
+    # Проверка обязательных полей
+    if any(x is None for x in [call_id, score, call_category, caller_info, category_number]):
+        logger.warning(f"Пропуск сохранения звонка {call_id}: отсутствуют обязательные поля (call_id={call_id}, score={score}, call_category={call_category}, caller_info={caller_info}, category_number={category_number})")
+        return False
 
-    logger.info(f"Попытка сохранения данных звонка: {call_id} с оценкой {score}, call_category {call_category}, call_date {call_date}, called_info {called_info}, caller_info {caller_info}, talk_duration {talk_duration}, transcript и result")
-    async with connection.cursor() as cursor:
-        try:
-            score_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            logger.info(f"Данные для вставки: history_id={call_id}, call_score={str(score)}, score_date={score_date}, call_date={call_date}, call_category={str(call_category)}, called_info={str(called_info)}, caller_info={str(caller_info)}, talk_duration={str(talk_duration)}, transcript={str(transcript)}, result={str(result)}, number_category={str(category_number)}, number_checklist={str(checklist_number)}, category_checklist={str(checklist_category)}")
+    # Логируем начало обработки
+    logger.info(f"Начало сохранения звонка {call_id}: score={score}, call_category={call_category}, call_date={call_date}")
 
+    try:
+        # Приводим типы данных
+        call_id = int(call_id)  # history_id — int
+        score = str(score)  # call_score — text
+        call_category = str(call_category)  # call_category — text
+        caller_info = str(caller_info)[:255]  # varchar(255)
+        called_info = str(called_info)[:255] if called_info is not None else None  # varchar(255), может быть NULL
+        talk_duration = int(talk_duration) if talk_duration is not None else None  # smallint UNSIGNED
+        transcript = str(transcript) if transcript is not None else None  # text
+        result = str(result) if result is not None else None  # text
+        category_number = int(category_number)  # number_category — int
+        checklist_number = int(checklist_number) if checklist_number is not None else None  # int, может быть NULL
+        checklist_category = str(checklist_category) if checklist_category is not None else None  # text, может быть NULL
+
+        # Текущая дата для score_date
+        score_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        # Логируем данные перед вставкой (только ключевые, чтобы не спамить)
+        logger.debug(f"Подготовленные данные: call_id={call_id}, score={score}, score_date={score_date}, category_number={category_number}")
+
+        # SQL-запрос
+        async with connection.cursor() as cursor:
             insert_score_query = """
-            INSERT INTO call_scores (history_id, call_score, score_date, call_date, call_category, called_info, caller_info, talk_duration, transcript, result, number_category, number_checklist, category_checklist)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO call_scores (
+                history_id, call_score, score_date, call_date, call_category, called_info, 
+                caller_info, talk_duration, transcript, result, number_category, 
+                number_checklist, category_checklist
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
-            await cursor.execute(insert_score_query, (call_id, str(score), score_date, call_date, str(call_category), str(called_info), str(caller_info), str(talk_duration), str(transcript), str(result), str(category_number), str(checklist_number), str(checklist_category)))
+            await cursor.execute(insert_score_query, (
+                call_id, score, score_date, call_date, call_category, called_info, 
+                caller_info, talk_duration, transcript, result, category_number, 
+                checklist_number, checklist_category
+            ))
             await connection.commit()
-            logger.info("Данные звонка успешно сохранены в call_scores")
-        except Error as e:
-            logger.error(f"Произошла ошибка '{e}' при сохранении данных звонка")
-            await connection.rollback()
+            logger.info(f"Звонок {call_id} успешно сохранён в call_scores")
+            return True
+
+    except Exception as e:
+        logger.error(f"Ошибка сохранения звонка {call_id}: {e}. Данные: call_id={call_id}, score={score}, category_number={category_number}")
+        await connection.rollback()
+        return False
 
 # Пример вызова функции
 if __name__ == "__main__":

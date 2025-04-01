@@ -51,7 +51,7 @@ lock = asyncio.Lock()
 
 # Параметры конфигурации
 CONFIG = {
-    'LIMIT': 5,
+    'LIMIT': 50,
     'RETRIES': 3,
     'START_DATE': '2024-12-01 00:00:00',
     'START_DATE_TIMESTAMP': '1733004000',
@@ -222,10 +222,13 @@ async def analyze_and_save_call(pool, transcript, checklists, call_id, call_date
             async with lock:
                 connection = await pool.get_connection()
                 try:
-                    await save_call_score(
+                    success = await save_call_score(
                         connection, call_id, score, call_category_clean, call_date, called_info, caller_info,
                         talk_duration, transcript, result, category_number, category_number, checklist_result
                     )
+                    if not success:
+                        logger.error(f"Не удалось сохранить звонок {call_id}")
+                        return {'history_id': call_id, 'status': 'failed'}
                 finally:
                     await pool.release_connection(connection)
 
@@ -349,13 +352,13 @@ async def process_missing_calls(missing_ids, pool, checklists, lock):
                 if not transcript or not transcript.strip():
                     logger.warning(f"Нет transcript для ID {call_id}, пропускаю")
                     continue
-                
+                logger.info(f"Начинаю анализ звонка {call_id}")
                 # Добавляем задачу на анализ и сохранение
                 tasks.append(analyze_and_save_call(
                     pool, transcript, checklists, call_id, call_date,
                     called_info, caller_info, talk_duration, lock
                 ))
-            
+                logger.info(f"Сохранение звонка {call_id} успешно")
             # Выполняем все задачи разом
             if tasks:
                 results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -474,7 +477,7 @@ async def main():
                     logger.info(f"Звонок ID {last_processed_history_id} обработан, состояние обновлено")
                 else:
                     logger.info("Новых звонков нет, жду...")
-                await asyncio.sleep(10800)
+                await asyncio.sleep(600)
             except DatabaseError as e:
                 logger.error(f"Ошибка базы: {e}, пытаюсь переподключиться")
                 await initialize_db_pool()
